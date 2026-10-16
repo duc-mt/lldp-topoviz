@@ -125,3 +125,23 @@ def test_the_check_config_is_validated():
         LinkCheckConfig.from_settings({"ignore_ports": ["("]})
     with pytest.raises(ConfigError, match="mapping"):
         LinkCheckConfig.from_settings(["x"])
+
+
+def test_vyos_to_junos_link_check():
+    # VyOS (eth0, status up, unknown speed prefix) to Junos (ge-0/0/0, 1000M full up)
+    warnings = check_link(
+        [
+            end("vyos-gw1", "eth0", speed=None, duplex=None, status="up"),
+            end("edge-rtr2", "ge-0/0/0", speed=1000, duplex="full", status="up"),
+        ]
+    )
+    assert warnings == []
+
+    # When Junos ge-0/0/0 (Gigabit) negotiates down to 100M, it's flagged as degraded
+    degraded = check_link(
+        [
+            end("vyos-gw1", "eth0", speed=None, duplex=None, status="up"),
+            end("edge-rtr2", "ge-0/0/0", speed=100, duplex="full", status="up"),
+        ]
+    )
+    assert kinds(degraded) == [("below_nominal", SEVERITY_DEGRADED)]

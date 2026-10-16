@@ -135,12 +135,23 @@ def parse_vyos_interfaces(rows: Sequence[Mapping[str, Any]]) -> list[InterfaceSt
         if not name or name == "lo":
             continue
         status_raw = _text(row.get("STATUS")).lower()
-        if "a" in status_raw:
+        if "/" in status_raw:
+            admin, _, oper = status_raw.partition("/")
+            admin, oper = admin.strip(), oper.strip()
+            if "a" in admin:
+                state = "disabled"
+            elif "u" in oper:
+                state = "up"
+            elif "d" in oper or "d" in admin:
+                state = "down"
+            else:
+                state = parse_link_state(oper)
+        elif "a" in status_raw:
             state = "disabled"
-        elif "u" in status_raw:
-            state = "up"
         elif "d" in status_raw:
             state = "down"
+        elif "u" in status_raw:
+            state = "up"
         else:
             state = parse_link_state(status_raw)
         result.append(

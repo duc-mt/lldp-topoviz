@@ -1,7 +1,7 @@
 Value INTERFACE (\S+)
 Value List IP_ADDRESS (\S+)
-Value STATUS (\S+)
-Value DESCRIPTION (.+?)
+Value STATUS ([A-Za-z]/[A-Za-z])
+Value DESCRIPTION (.*)
 
 Start
   ^Codes:
@@ -12,8 +12,8 @@ Start
 
 Interface
   ^\S+\s+ -> Continue.Record
-  ^${INTERFACE}\s+${IP_ADDRESS}\s+\S+\s+\S+\s+\d+\s+${STATUS}\s+(${DESCRIPTION}|)\s*$$
-  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}\s+(${DESCRIPTION}|)\s*$$
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+.*?${STATUS}(?:\s+${DESCRIPTION})?\s*$$
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}(?:\s+${DESCRIPTION})?\s*$$
   ^\s+${IP_ADDRESS}\s*$$
   ^\s*$$
   ^. -> Continue

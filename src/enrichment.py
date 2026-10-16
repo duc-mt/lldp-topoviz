@@ -156,7 +156,7 @@ _OS_KEYWORDS = (
     (re.compile(r"aos-?cx", re.I), "AOS-CX"),
     (re.compile(r"huawei|\bvrp\b", re.I), "VRP"),
     (re.compile(r"junos|juniper", re.I), "Junos"),
-    (re.compile(r"vyos|\bvyatta\b", re.I), "VyOS"),
+    (re.compile(r"\bvyos\b|\bvyatta\b", re.I), "VyOS"),
     (re.compile(r"pfsense", re.I), "pfSense"),
     (re.compile(r"fortios|fortigate", re.I), "FortiOS"),
     (re.compile(r"\bgaia\b|check ?point", re.I), "Gaia"),

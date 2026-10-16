@@ -16,6 +16,7 @@ Notes:         Requires Python 3.10+
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -69,6 +70,8 @@ __all__ = [
     "supported_device_types",
 ]
 
+logger = logging.getLogger(__name__)
+
 
 class UnsupportedVendorError(MapperError):
     """Raised for a device_type that has no registered profile."""
@@ -91,6 +94,7 @@ def _resolve_template(template: str, label: str, search_dirs: Sequence[Path]) ->
     candidates.append(Path(get_template_dir()) / template)
     for candidate in candidates:
         if candidate.is_file():
+            logger.debug("Resolved template '%s' for %s -> %s", template, label, candidate)
             return candidate
     raise ConfigError(
         f"TextFSM template '{template}' for {label} was not found "

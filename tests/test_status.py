@@ -139,7 +139,7 @@ def test_vyos_interface_parsing():
     assert [(s.name, s.status) for s in statuses] == [
         ("eth0", "up"),
         ("eth1", "disabled"),
-        ("eth2", "up"),
+        ("eth2", "down"),
     ]
 
 
