@@ -127,7 +127,7 @@ def classify_node(attrs: dict[str, Any], label: str, rules: NodeTypeRules | None
     device_type = str(attrs.get("device_type") or "")
     if device_type in _SWITCH_TYPES:
         return "switch"
-    if device_type == "cisco_xr":
+    if device_type in ("cisco_xr", "vyos"):
         return "router"
     return "unknown"
 
@@ -144,6 +144,7 @@ _OS_BY_DEVICE_TYPE = {
     "huawei_vrp": "VRP",
     "huawei_vrpv8": "VRP",
     "juniper_junos": "Junos",
+    "vyos": "VyOS",
 }
 # Description keywords, most specific first (the description tells IOS from IOS-XE).
 _OS_KEYWORDS = (
@@ -155,6 +156,7 @@ _OS_KEYWORDS = (
     (re.compile(r"aos-?cx", re.I), "AOS-CX"),
     (re.compile(r"huawei|\bvrp\b", re.I), "VRP"),
     (re.compile(r"junos|juniper", re.I), "Junos"),
+    (re.compile(r"vyos|\bvyatta\b", re.I), "VyOS"),
     (re.compile(r"pfsense", re.I), "pfSense"),
     (re.compile(r"fortios|fortigate", re.I), "FortiOS"),
     (re.compile(r"\bgaia\b|check ?point", re.I), "Gaia"),
@@ -171,6 +173,7 @@ _VERSION_PATTERNS = {
     "VRP": r"Version\s+([\d.]+)",
     "AOS-CX": r"(\d+\.\d+\.\d+)",
     "Junos": r"Junos:?\s+([\w.\-]+)",
+    "VyOS": r"VyOS\s+([\w.\-]+)",
     "pfSense": r"pfSense\s+([\d.]+)",
     "FortiOS": r"v?(\d+\.\d+\.\d+)",
 }

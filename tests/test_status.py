@@ -6,7 +6,9 @@ from src.vendors.base import parse_duplex, parse_link_state, parse_speed
 from src.vendors.status import (
     parse_aoscx_interface,
     parse_huawei_interface,
+    parse_junos_interfaces,
     parse_status_table,
+    parse_vyos_interfaces,
     parse_xr_interfaces,
 )
 
@@ -124,6 +126,45 @@ def test_huawei_aoscx_and_xr_rows():
     )
     assert (xr.speed, xr.duplex) == (100000, "full")
     assert parse_status_table([{"port": ""}]) == []
+
+
+def test_vyos_interface_parsing():
+    rows = [
+        {"INTERFACE": "eth0", "STATUS": "u/u", "DESCRIPTION": "WAN"},
+        {"INTERFACE": "eth1", "STATUS": "A/D", "DESCRIPTION": "DMZ"},
+        {"INTERFACE": "eth2", "STATUS": "u/D", "DESCRIPTION": "DOWN"},
+        {"INTERFACE": "lo", "STATUS": "u/u", "DESCRIPTION": ""},
+    ]
+    statuses = parse_vyos_interfaces(rows)
+    assert [(s.name, s.status) for s in statuses] == [
+        ("eth0", "up"),
+        ("eth1", "disabled"),
+        ("eth2", "up"),
+    ]
+
+
+def test_junos_interface_parsing():
+    rows = [
+        {
+            "INTERFACE": "ge-0/0/0",
+            "ADMIN_STATE": "Enabled",
+            "LINK_STATUS": "Up",
+            "SPEED": "1000mbps",
+            "DUPLEX": "Full-Duplex",
+        },
+        {
+            "INTERFACE": "ge-0/0/1",
+            "ADMIN_STATE": "Administratively down",
+            "LINK_STATUS": "Down",
+            "SPEED": "1000mbps",
+            "DUPLEX": "Full-Duplex",
+        },
+    ]
+    statuses = parse_junos_interfaces(rows)
+    assert [(s.name, s.status, s.speed, s.duplex) for s in statuses] == [
+        ("ge-0/0/0", "up", 1000, "full"),
+        ("ge-0/0/1", "disabled", 1000, "full"),
+    ]
 
 
 @pytest.mark.parametrize(

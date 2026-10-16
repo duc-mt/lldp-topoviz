@@ -1,0 +1,4 @@
+10.0.4.1:
+  file: 10.0.4.1.txt
+  hostname: edge-rtr2
+  device_type: juniper_junos

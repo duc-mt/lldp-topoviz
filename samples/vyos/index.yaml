@@ -1,0 +1,4 @@
+10.0.3.1:
+  file: 10.0.3.1.txt
+  hostname: vyos-gw1
+  device_type: vyos

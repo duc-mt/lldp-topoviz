@@ -1,0 +1,39 @@
+Local Interface    : ge-0/0/0.0
+Parent Interface   : -
+Local Port ID      : 5
+Aging count        : 0
+Neighbor Information:
+  Chassis type     : Mac address
+  Chassis ID       : 0c4d.e900.0a01
+  Port type        : Interface name
+  Port ID          : Eth1/14
+  Port description : Link to dist1
+  System name      : dist1.lab.local
+  System Description: Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+  System capabilities: 
+    Supported: Bridge Router
+    Enabled  : Bridge Router
+  Management address:
+    Address Type    : IPv4(1)
+    Address         : 10.0.1.1
+    Interface Subtype: Interface number(2)
+    Interface ID    : 5
+
+Local Interface    : ge-0/0/1
+Parent Interface   : -
+Local Port ID      : 6
+Aging count        : 0
+Neighbor Information:
+  Chassis type     : Mac address
+  Chassis ID       : 00:53:00:01:02:c9
+  Port type        : Interface name
+  Port ID          : eth1
+  Port description : Link to VyOS
+  System name      : vyos-gw1.lab.local
+  System Description: VyOS 1.3-rolling-201912230217
+  System capabilities: 
+    Supported: Router
+    Enabled  : Router
+  Management address:
+    Address Type    : IPv4(1)
+    Address         : 10.0.3.1

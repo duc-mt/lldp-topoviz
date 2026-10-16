@@ -1,0 +1,21 @@
+Value Required LOCAL_INTERFACE (\S+)
+Value CHASSIS_ID (.*)
+Value NEIGHBOR_NAME (.*)
+Value SYSTEM_DESCRIPTION (.*)
+Value List MGMT_ADDRESS ([a-fA-F0-9:\.]+)
+Value List CAPABILITIES (.*)
+Value NEIGHBOR_PORT_ID (.*)
+Value NEIGHBOR_INTERFACE (.*)
+
+Start
+  ^Interface:\s+ -> Continue.Record
+  ^Interface:\s+${LOCAL_INTERFACE},
+  ^\s+ChassisID:\s+(?:mac\s+)?${CHASSIS_ID}\s*$$
+  ^\s+SysName:\s+${NEIGHBOR_NAME}\s*$$
+  ^\s+SysDescr:\s+${SYSTEM_DESCRIPTION}\s*$$
+  ^\s+MgmtIP:\s+${MGMT_ADDRESS}\s*$$
+  ^\s+Capability:\s+.*,\s*off\s*$$
+  ^\s+Capability:\s+${CAPABILITIES}(?:,\s*on)?\s*$$
+  ^\s+PortID:\s+(?:(?:mac|ifname|local)\s+)?${NEIGHBOR_PORT_ID}\s*$$
+  ^\s+PortDescr:\s+${NEIGHBOR_INTERFACE}\s*$$
+  ^-{10,} -> Record

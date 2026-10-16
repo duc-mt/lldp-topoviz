@@ -258,11 +258,11 @@ def test_device_type_comes_from_rules_overrides_and_default():
 
 def test_platform_without_a_profile_is_shown_with_the_reason():
     devices = {
-        "10.0.0.1": ("a", [row("Gi1", "jr", "xe-0/0/0", "10.0.0.9", desc="Juniper Junos 22.4")])
+        "10.0.0.1": ("a", [row("Gi1", "fgt", "port1", "10.0.0.9", desc="Fortinet FortiOS 7.2")])
     }
     _, engine, poller = crawl(devices)
     assert poller.calls == ["10.0.0.1"]
-    assert "no LLDP profile for device_type 'juniper_junos'" in reason(engine, "jr")
+    assert "no LLDP profile for device_type 'fortinet'" in reason(engine, "fgt")
 
 
 def test_neighbor_that_resolves_to_the_device_itself_is_ignored():
@@ -314,7 +314,7 @@ def test_skip_codes_match_the_reasons():
                 row("Gi2", "noip", "x", ""),
                 row("Gi3", "ap-1", "x", "10.0.0.8"),
                 row("Gi4", "phone", "x", "10.0.0.9", caps="T"),
-                row("Gi5", "jr", "x", "10.0.0.10", desc="Juniper Junos 22.4"),
+                row("Gi5", "fgt", "x", "10.0.0.10", desc="Fortinet FortiOS 7.2"),
             ],
         )
     }
@@ -325,7 +325,7 @@ def test_skip_codes_match_the_reasons():
         "noip": "no_ip",
         "ap-1": "excluded",
         "phone": "capabilities",
-        "jr": "no_profile",
+        "fgt": "no_profile",
     }
 
 

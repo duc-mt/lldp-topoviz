@@ -10,7 +10,7 @@
 seed:
   host: ""                 # IP or DNS name of the seed device
   device_type: cisco_ios   # cisco_ios, cisco_xe, cisco_nxos, cisco_xr, arista_eos,
-                           # aruba_aoscx, huawei (plus anything under custom_vendors)
+                           # aruba_aoscx, huawei, vyos, juniper_junos (plus anything under custom_vendors)
 
 # SSH credentials and timeouts, shared by every device in the crawl.
 device:

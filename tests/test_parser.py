@@ -145,3 +145,30 @@ def test_switching_collection_off_skips_the_port_channels(demo_dir):
         FilePoller(demo_dir, collect_lag=False).poll("10.0.0.1", "cisco_ios")
     )
     assert parsed.port_channels == [] and "switched off" in parsed.lag_note
+
+
+def test_vyos_sample_parses():
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parent.parent / "samples" / "vyos"
+    parsed = LldpParser().parse(FilePoller(base).poll("10.0.3.1", "vyos"))
+    assert parsed.hostname == "vyos-gw1"
+    assert len(parsed.neighbors) == 2
+    assert parsed.neighbors[0].neighbor_name == "dist1.lab.local"
+    assert parsed.neighbors[1].neighbor_name == "edge-rtr2.lab.local"
+    assert parsed.interfaces["eth0"].status == "up"
+
+
+def test_juniper_junos_sample_parses():
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parent.parent / "samples" / "juniper_junos"
+    parsed = LldpParser().parse(FilePoller(base).poll("10.0.4.1", "juniper_junos"))
+    assert parsed.hostname == "edge-rtr2"
+    assert len(parsed.neighbors) == 2
+    assert parsed.neighbors[0].neighbor_name == "dist1.lab.local"
+    assert parsed.neighbors[1].neighbor_name == "vyos-gw1.lab.local"
+    assert parsed.interfaces["ge-0/0/0"].status == "up"
+    assert parsed.interfaces["ge-0/0/0"].speed == 1000
+    assert len(parsed.port_channels) == 1
+    assert parsed.port_channels[0].name == "ae0"

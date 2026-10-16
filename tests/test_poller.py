@@ -138,7 +138,7 @@ def test_error_text_is_one_line():
 def test_unsupported_device_type_fails_before_connecting():
     with patch("src.poller.ConnectHandler") as handler:
         with pytest.raises(PollerError, match="not supported"):
-            DevicePoller(CONN).poll("10.0.0.1", "juniper_junos")
+            DevicePoller(CONN).poll("10.0.0.1", "fortinet")
         handler.assert_not_called()
 
 
@@ -279,7 +279,7 @@ def test_other_failure_kinds():
         poll_with(FakeConn("% Invalid input detected at '^' marker."))
     assert info.value.kind == "rejected"
     with patch("src.poller.ConnectHandler"), pytest.raises(PollerError) as info:
-        DevicePoller(CONN).poll("10.0.0.1", "juniper_junos")
+        DevicePoller(CONN).poll("10.0.0.1", "fortinet")
     assert info.value.kind == "unsupported"
     with pytest.raises(PollerError) as info:
         FilePoller(DEMO_DIR).poll("10.9.9.9", "cisco_ios")

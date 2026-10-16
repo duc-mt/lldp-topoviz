@@ -104,7 +104,27 @@ def test_huawei_ignores_the_partner_rows_and_groups_by_trunk():
     assert two.protocol == "static" and len(two.members) == 1
 
 
-def test_only_the_four_platforms_with_templates_have_a_port_channel_profile():
+def test_junos_lacp_parsing():
+    from src.vendors.lag import parse_junos_lacp
+
+    rows = [
+        {
+            "BUNDLE_NAME": "ae0",
+            "MEMBER_INTERFACE": ["ge-0/0/1", "ge-0/0/2"],
+            "RECEIVE_STATE": ["Current", "Current"],
+            "TRANSMIT_STATE": ["Fast periodic", "Fast periodic"],
+            "MUX_STATE": ["Collecting distributing", "Detached"],
+        }
+    ]
+    (channel,) = parse_junos_lacp(rows)
+    assert channel.name == "ae0" and channel.protocol == "LACP" and channel.up
+    assert [(m.interface, m.state) for m in channel.members] == [
+        ("ge-0/0/1", "bundled"),
+        ("ge-0/0/2", "down"),
+    ]
+
+
+def test_platforms_with_port_channel_profile():
     with_lag = {
         k
         for k in (
@@ -115,10 +135,15 @@ def test_only_the_four_platforms_with_templates_have_a_port_channel_profile():
             "huawei",
             "huawei_vrp",
             "huawei_vrpv8",
+            "juniper_junos",
         )
         if get_profile(k).lag
     }
-    assert len(with_lag) == 7
-    assert get_profile("aruba_aoscx").lag is None and get_profile("cisco_xr").lag is None
+    assert len(with_lag) == 8
+    assert (
+        get_profile("aruba_aoscx").lag is None
+        and get_profile("cisco_xr").lag is None
+        and get_profile("vyos").lag is None
+    )
     for key in with_lag:
         assert get_profile(key).lag.resolve_template().is_file()

@@ -36,11 +36,13 @@ from src.vendors.base import (
     merge_neighbors,
     row_to_neighbor,
 )
-from src.vendors.lag import parse_flag_style, parse_huawei
+from src.vendors.lag import parse_flag_style, parse_huawei, parse_junos_lacp
 from src.vendors.status import (
     parse_aoscx_interface,
     parse_huawei_interface,
+    parse_junos_interfaces,
     parse_status_table,
+    parse_vyos_interfaces,
     parse_xr_interfaces,
 )
 
@@ -74,13 +76,18 @@ class UnsupportedVendorError(MapperError):
     kind = "unsupported"  # failure class shown in the diagram
 
 
+_BUILTIN_TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+
+
 def _resolve_template(template: str, label: str, search_dirs: Sequence[Path]) -> Path:
-    """Locate a TextFSM template: an absolute path, then ``search_dirs``, then ntc-templates."""
+    """Locate a TextFSM template: an absolute path, search dirs, templates/, or ntc-templates."""
     candidates: list[Path] = []
     own = Path(template)
     if own.is_absolute():
         candidates.append(own)
     candidates.extend(Path(d) / template for d in search_dirs)
+    candidates.append(_BUILTIN_TEMPLATES_DIR / template)
+    candidates.append(_BUILTIN_TEMPLATES_DIR / own.name)
     candidates.append(Path(get_template_dir()) / template)
     for candidate in candidates:
         if candidate.is_file():
@@ -278,6 +285,39 @@ register(
     "huawei_vrpv8",
 )
 
+register(
+    VendorProfile(
+        key="vyos",
+        description="VyOS / FRR (text parser)",
+        command="show lldp neighbors detail",
+        template="vyos_show_lldp_neighbors_detail.textfsm",
+        fields=FieldMap(
+            neighbor_interface=("NEIGHBOR_PORT_ID", "NEIGHBOR_INTERFACE"),
+            description=("SYSTEM_DESCRIPTION",),
+        ),
+        error_markers=(
+            "Invalid command",
+            "Unknown command",
+            "Command incomplete",
+            "% Unknown command",
+            "% Command incomplete",
+        ),
+    )
+)
+register(
+    VendorProfile(
+        key="juniper_junos",
+        description="Juniper Junos",
+        command="show lldp neighbors detail",
+        template="juniper_junos_show_lldp_neighbors_detail.textfsm",
+        fields=FieldMap(
+            neighbor_interface=("NEIGHBOR_PORT_ID", "NEIGHBOR_INTERFACE"),
+            description=("SYSTEM_DESCRIPTION",),
+        ),
+        error_markers=("syntax error", "unknown command", "error:"),
+    )
+)
+
 _EOS_ERRORS = ("% Invalid input", "% Incomplete command", "% Ambiguous command")
 _LAG_PROFILES = {
     ("cisco_ios", "cisco_xe"): LagProfile(
@@ -303,6 +343,12 @@ _LAG_PROFILES = {
         "huawei_vrp_display_eth-trunk.textfsm",
         parse_huawei,
         ("Error: Wrong parameter", "Error: Unrecognized command", "Error: Incomplete command"),
+    ),
+    ("juniper_junos",): LagProfile(
+        "show lacp interfaces",
+        "juniper_junos_show_lacp_interfaces.textfsm",
+        parse_junos_lacp,
+        ("syntax error", "unknown command", "error:"),
     ),
 }
 for _device_types, _lag in _LAG_PROFILES.items():
@@ -384,6 +430,18 @@ _STATUS_PROFILES = {
         parse_huawei_interface,
         ("Error: Wrong parameter", "Error: Unrecognized command", "Error: Incomplete command"),
     ),
+    ("juniper_junos",): StatusProfile(
+        "show interfaces",
+        "juniper_junos_show_interfaces.textfsm",
+        parse_junos_interfaces,
+        ("syntax error", "unknown command", "error:"),
+    ),
+    ("vyos",): StatusProfile(
+        "show interfaces",
+        "vyatta_vyos_show_interfaces.textfsm",
+        parse_vyos_interfaces,
+        ("Invalid command", "Unknown command", "Command incomplete"),
+    ),
 }
 for _device_types, _status in _STATUS_PROFILES.items():
     for _device_type in _device_types:
@@ -391,11 +449,6 @@ for _device_types, _status in _STATUS_PROFILES.items():
 
 #: Platforms that are known but deliberately not built in, with the reason.
 UNSUPPORTED_HINTS = {
-    "juniper_junos": (
-        "The bundled ntc-templates 'show lldp neighbors' template for Junos has no management "
-        "address, so Junos neighbors cannot be crawled from it. Add a custom_vendors entry "
-        "with your own template (see README)."
-    ),
     "fortinet": (
         "ntc-templates only has a per-port FortiOS template ('diagnose lldprx port neighbor "
         "details <port>'), not a whole-device LLDP command. Add a custom_vendors entry if you "
@@ -441,6 +494,8 @@ DEFAULT_DEVICE_TYPE_RULES: tuple[tuple[str, str], ...] = (
     (r"aos-?cx|arubaos-cx", "aruba_aoscx"),
     (r"huawei|\bvrp\b", "huawei"),
     (r"junos|juniper", "juniper_junos"),
+    (r"vyos|\bvyatta\b", "vyos"),
+    (r"fortios|fortigate", "fortinet"),
 )
 
 

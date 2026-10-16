@@ -1,0 +1,28 @@
+-------------------------------------------------------------------------------
+LLDP neighbors:
+-------------------------------------------------------------------------------
+Interface:    eth0, via: LLDP, RID: 1, Time: 0 day, 01:10:00
+  Chassis:
+    ChassisID:    mac 00:53:00:01:02:c9
+    SysName:      dist1.lab.local
+    SysDescr:     Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+    MgmtIP:       10.0.1.1
+    Capability:   Bridge, on
+    Capability:   Router, on
+  Port:
+    PortID:       ifname Eth1/13
+    PortDescr:    to-vyos
+    TTL:          120
+-------------------------------------------------------------------------------
+Interface:    eth1, via: LLDP, RID: 2, Time: 0 day, 01:10:00
+  Chassis:
+    ChassisID:    mac 00:53:00:01:02:ca
+    SysName:      edge-rtr2.lab.local
+    SysDescr:     Juniper Networks, Inc. mx204 Junos 22.4R2
+    MgmtIP:       10.0.4.1
+    Capability:   Router, on
+  Port:
+    PortID:       ifname ge-0/0/1
+    PortDescr:    Link to VyOS
+    TTL:          120
+-------------------------------------------------------------------------------

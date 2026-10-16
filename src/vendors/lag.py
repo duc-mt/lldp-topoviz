@@ -107,3 +107,34 @@ def parse_huawei(rows: Sequence[Mapping[str, Any]]) -> list[PortChannel]:
         )
         for name, trunk in trunks.items()
     ]
+
+
+def parse_junos_lacp(rows: Sequence[Mapping[str, Any]]) -> list[PortChannel]:
+    """Juniper Junos ``show lacp interfaces``: BUNDLE_NAME, MEMBER_INTERFACE, MUX_STATE, etc."""
+    channels: list[PortChannel] = []
+    for raw_row in rows:
+        row = _upper(raw_row)
+        name = str(row.get("BUNDLE_NAME") or "").strip()
+        if not name:
+            continue
+        interfaces = _as_list(row.get("MEMBER_INTERFACE"))
+        mux_states = _as_list(row.get("MUX_STATE"))
+        rx_states = _as_list(row.get("RECEIVE_STATE"))
+        members = []
+        for index, iface in enumerate(interfaces):
+            mux = (mux_states[index] if index < len(mux_states) else "").lower()
+            rx = (rx_states[index] if index < len(rx_states) else "").lower()
+            if "collecting" in mux or "distributing" in mux:
+                state = "bundled"
+            elif "detached" in mux or "waiting" in mux or "down" in mux:
+                state = "down"
+            elif rx == "current" and not mux:
+                state = "bundled"
+            elif not mux and not rx:
+                state = "other"
+            else:
+                state = "down"
+            members.append(PortChannelMember(interface=iface, state=state))
+        is_up = any(m.state == "bundled" for m in members) if members else True
+        channels.append(PortChannel(name=name, protocol="LACP", up=is_up, members=tuple(members)))
+    return channels

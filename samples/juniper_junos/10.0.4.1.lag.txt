@@ -1,0 +1,7 @@
+Aggregated interface: ae0
+    LACP state:       Role   Exp   Def  Dist  Col  Syn  Aggr  Timeout  Activity
+      ge-0/0/10      Actor    No    No   Yes  Yes  Yes   Yes     Fast    Active
+      ge-0/0/11      Actor    No    No   Yes  Yes  Yes   Yes     Fast    Active
+    LACP protocol:        Receive State  Transmit State          Mux State
+      ge-0/0/10                 Current   Fast periodic Collecting distributing
+      ge-0/0/11                 Current   Fast periodic Collecting distributing

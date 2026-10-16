@@ -85,12 +85,31 @@ _NOISE_TOKENS = {
     "two-port-mac-relay",
     "cvta",
     "remote",
+    # Status / noise flags
+    "on",
+    "off",
+    "yes",
+    "no",
+    "enabled",
+    "disabled",
+    "supported",
 }
+
+
+def _flatten_items(value: Any) -> list[Any]:
+    flat: list[Any] = []
+    items = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+    for item in items:
+        if isinstance(item, (list, tuple, set, frozenset)):
+            flat.extend(_flatten_items(item))
+        else:
+            flat.append(item)
+    return flat
 
 
 def normalize_capabilities(value: Any) -> frozenset[str]:
     """Turn ``"B,R"``, ``"Bridge, Router"`` or a list of either into canonical names."""
-    items = value if isinstance(value, (list, tuple)) else [value]
+    items = _flatten_items(value)
     result: set[str] = set()
     for item in items:
         for token in re.split(r"[,;/\s]+", str(item or "").strip().lower()):

@@ -1,0 +1,11 @@
+Physical interface: ge-0/0/0, Enabled, Physical link is Up
+  Interface index: 133, SNMP ifIndex: 506
+  Description: to-dist1
+  Link-level type: Ethernet, MTU: 1514, Speed: 1000mbps, Duplex: Full-Duplex, BPDU Error: None
+Physical interface: ge-0/0/1, Enabled, Physical link is Up
+  Interface index: 134, SNMP ifIndex: 507
+  Description: to-vyos
+  Link-level type: Ethernet, MTU: 1514, Speed: 1000mbps, Duplex: Full-Duplex, BPDU Error: None
+Physical interface: ge-0/0/2, Administratively down, Physical link is Down
+  Interface index: 135, SNMP ifIndex: 508
+  Link-level type: Ethernet, MTU: 1514, Speed: 1000mbps, Duplex: Full-Duplex

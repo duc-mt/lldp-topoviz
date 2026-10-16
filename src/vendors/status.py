@@ -124,3 +124,60 @@ def parse_xr_interfaces(rows: Sequence[Mapping[str, Any]]) -> list[InterfaceStat
             )
         )
     return result
+
+
+def parse_vyos_interfaces(rows: Sequence[Mapping[str, Any]]) -> list[InterfaceStatus]:
+    """VyOS ``show interfaces``: INTERFACE, STATUS (``u/u``, ``A/D``, ...), DESCRIPTION."""
+    result = []
+    for raw in rows:
+        row = _row(raw)
+        name = _text(row.get("INTERFACE"))
+        if not name or name == "lo":
+            continue
+        status_raw = _text(row.get("STATUS")).lower()
+        if "a" in status_raw:
+            state = "disabled"
+        elif "u" in status_raw:
+            state = "up"
+        elif "d" in status_raw:
+            state = "down"
+        else:
+            state = parse_link_state(status_raw)
+        result.append(
+            InterfaceStatus(
+                name=name,
+                status=state,
+            )
+        )
+    return result
+
+
+def parse_junos_interfaces(rows: Sequence[Mapping[str, Any]]) -> list[InterfaceStatus]:
+    """Juniper Junos ``show interfaces``: INTERFACE, ADMIN_STATE, LINK_STATUS, SPEED, DUPLEX."""
+    result = []
+    for raw in rows:
+        row = _row(raw)
+        name = _text(row.get("INTERFACE"))
+        if not name:
+            continue
+        admin = _text(row.get("ADMIN_STATE")).lower()
+        link = _text(row.get("LINK_STATUS")).lower()
+        if "down" in admin or "disabled" in admin:
+            state = "disabled"
+        elif "up" in link:
+            state = "up"
+        elif "down" in link:
+            state = "down"
+        else:
+            state = parse_link_state(link)
+        speed, _ = parse_speed(_text(row.get("SPEED")))
+        duplex, _ = parse_duplex(_text(row.get("DUPLEX")))
+        result.append(
+            InterfaceStatus(
+                name=name,
+                status=state,
+                speed=speed,
+                duplex=duplex,
+            )
+        )
+    return result

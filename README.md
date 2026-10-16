@@ -53,6 +53,8 @@ The easiest way to run is via the universal launcher script (`./run.sh` on Linux
 ./run.sh --config samples/arista_eos/settings.yaml --replay samples/arista_eos
 ./run.sh --config samples/huawei/settings.yaml --replay samples/huawei
 ./run.sh --config samples/aruba_aoscx/settings.yaml --replay samples/aruba_aoscx
+./run.sh --config samples/vyos/settings.yaml --replay samples/vyos
+./run.sh --config samples/juniper_junos/settings.yaml --replay samples/juniper_junos
 
 # Windows (CMD / PowerShell):
 # run.bat --config samples\cisco_ios\settings.yaml --replay samples\cisco_ios
@@ -208,6 +210,8 @@ Netmiko explicitly, so the mismatch between Netmiko device types and ntc platfor
 | `arista_eos` | LLDP | `show port-channel summary` | `show interfaces status` | The LLDP template has no capabilities column |
 | `aruba_aoscx` | LLDP | none | `show interface` | Its bundles are known only from the other end |
 | `huawei`, `huawei_vrp`, `huawei_vrpv8` | LLDP | `display eth-trunk` | `display interface` | Tested against bundled captures |
+| `juniper_junos` | LLDP | `show lacp interfaces` | `show interfaces` | Tested against bundled captures |
+| `vyos` | LLDP | none | `show interfaces` | Tested against bundled captures |
 
 LLDP is `show lldp neighbors detail` (`show lldp neighbor-info detail` on AOS-CX, `display lldp neighbor-information
 verbose` on Huawei); CDP is `show cdp neighbors detail`. Every command runs on the same SSH session. The extra ones
@@ -222,8 +226,6 @@ port, so on large stacks they are the slowest part of a crawl: use `--no-link-ch
 
 **Not built in, on purpose:**
 
-- **Juniper Junos**: the shipped template for `show lldp neighbors` has no management address, so Junos
-  neighbors cannot be crawled from it.
 - **FortiGate / FortiOS**: ntc-templates only has a per-port template (`diagnose lldprx port neighbor details <port>`).
 - **pfSense, Check Point, Ruijie**: no template. They show up as grey or red nodes. Give a neighbor an address
   with `crawl.name_to_ip` if it does not advertise one.

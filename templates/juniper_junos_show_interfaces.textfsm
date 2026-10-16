@@ -1,0 +1,14 @@
+Value Required INTERFACE (\S+)
+Value ADMIN_STATE (\S+(?:\s+\S+)?)
+Value LINK_STATUS (\S+)
+Value SPEED (\S+?)
+Value DUPLEX (\S+?)
+
+Start
+  ^Physical\s+interface:\s+ -> Continue.Record
+  ^Physical\s+interface:\s+${INTERFACE},\s+${ADMIN_STATE},\s+Physical\s+link\s+is\s+${LINK_STATUS}
+  ^.*Speed:\s+${SPEED}, -> Continue
+  ^.*Duplex:\s+${DUPLEX}, -> Continue
+  ^.*Duplex:\s+${DUPLEX}\s*$$
+  ^\s*$$
+  ^.

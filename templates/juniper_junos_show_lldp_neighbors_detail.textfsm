@@ -1,0 +1,21 @@
+Value Required LOCAL_INTERFACE (\S+?)
+Value PARENT_INTERFACE (\S+)
+Value CHASSIS_ID (.*)
+Value NEIGHBOR_PORT_ID (.*)
+Value NEIGHBOR_INTERFACE (.*)
+Value NEIGHBOR_NAME (.*)
+Value SYSTEM_DESCRIPTION (.*)
+Value CAPABILITIES (.*)
+Value List MGMT_ADDRESS ([a-fA-F0-9:\.]+)
+
+Start
+  ^\s*Local\s+Interface\s*:\s* -> Continue.Record
+  ^\s*Local\s+Interface\s*:\s*${LOCAL_INTERFACE}(?:\.\d+)?\s*$$
+  ^\s*Parent\s+Interface\s*:\s*${PARENT_INTERFACE}\s*$$
+  ^\s*Chassis\s+ID\s*:\s*${CHASSIS_ID}\s*$$
+  ^\s*Port\s+ID\s*:\s*${NEIGHBOR_PORT_ID}\s*$$
+  ^\s*Port\s+description\s*:\s*${NEIGHBOR_INTERFACE}\s*$$
+  ^\s*System\s+name\s*:\s*${NEIGHBOR_NAME}\s*$$
+  ^\s*System\s+Description\s*:\s*${SYSTEM_DESCRIPTION}\s*$$
+  ^\s*Enabled\s*:\s*${CAPABILITIES}\s*$$
+  ^\s*Address\s*:\s*${MGMT_ADDRESS}\s*$$
