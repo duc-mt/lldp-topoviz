@@ -1,0 +1,4 @@
+  Port  Name   Status  Config-mode Speed    Type       Tagged Untagged
+  ----- ------ ------- ----------- -------- ---------- ------ --------
+  A1           Up      Auto        1000FDx  100/1000T  No     1
+  A2           Up      Auto        1000FDx  100/1000T  No     1

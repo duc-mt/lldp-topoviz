@@ -55,6 +55,7 @@ The easiest way to run is via the universal launcher script (`./run.sh` on Linux
 ./run.sh --config samples/aruba_aoscx/settings.yaml --replay samples/aruba_aoscx
 ./run.sh --config samples/vyos/settings.yaml --replay samples/vyos
 ./run.sh --config samples/juniper_junos/settings.yaml --replay samples/juniper_junos
+./run.sh --config samples/hp_procurve/settings.yaml --replay samples/hp_procurve
 
 # Windows (CMD / PowerShell):
 # run.bat --config samples\cisco_ios\settings.yaml --replay samples\cisco_ios
@@ -212,6 +213,7 @@ Netmiko explicitly, so the mismatch between Netmiko device types and ntc platfor
 | `huawei`, `huawei_vrp`, `huawei_vrpv8` | LLDP | `display eth-trunk` | `display interface` | Tested against bundled captures |
 | `juniper_junos` | LLDP | `show lacp interfaces` | `show interfaces` | Tested against bundled captures |
 | `vyos` | LLDP | none | `show interfaces` | Tested against bundled captures |
+| `hp_procurve` | LLDP, CDP | none | `show interfaces status` | Tested against bundled captures; CDP listen-mode supported |
 
 LLDP is `show lldp neighbors detail` (`show lldp neighbor-info detail` on AOS-CX, `display lldp neighbor-information
 verbose` on Huawei); CDP is `show cdp neighbors detail`. Every command runs on the same SSH session. The extra ones

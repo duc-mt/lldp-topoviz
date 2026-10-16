@@ -172,3 +172,16 @@ def test_juniper_junos_sample_parses():
     assert parsed.interfaces["ge-0/0/0"].speed == 1000
     assert len(parsed.port_channels) == 1
     assert parsed.port_channels[0].name == "ae0"
+
+
+def test_hp_procurve_sample_parses():
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parent.parent / "samples" / "hp_procurve"
+    parsed = LldpParser().parse(FilePoller(base).poll("10.0.5.1", "hp_procurve"))
+    assert parsed.hostname == "procurve-sw1"
+    assert len(parsed.neighbors) == 2
+    assert parsed.neighbors[0].neighbor_name == "dist1.lab.local"
+    assert parsed.neighbors[1].neighbor_name == "vyos-gw1.lab.local"
+    assert parsed.interfaces["a1"].status == "up"
+    assert parsed.interfaces["a1"].speed == 1000

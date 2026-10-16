@@ -1,0 +1,5 @@
+10.0.5.1:
+  file: 10.0.5.1.txt
+  status_file: 10.0.5.1.status.txt
+  hostname: procurve-sw1
+  device_type: hp_procurve

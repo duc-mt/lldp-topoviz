@@ -167,6 +167,18 @@ def test_junos_interface_parsing():
     ]
 
 
+def test_hp_procurve_interface_parsing():
+    rows = [
+        {"PORT": "A1", "STATUS": "Up", "SPEED": "1000M"},
+        {"PORT": "A2", "STATUS": "Down", "SPEED": "1000M"},
+    ]
+    statuses = parse_status_table(rows)
+    assert [(s.name, s.status, s.speed) for s in statuses] == [
+        ("A1", "up", 1000),
+        ("A2", "down", 1000),
+    ]
+
+
 @pytest.mark.parametrize(
     ("host", "device_type", "port", "expected"),
     [

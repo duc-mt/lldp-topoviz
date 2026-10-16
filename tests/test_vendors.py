@@ -28,6 +28,7 @@ def test_builtin_profiles_resolve_their_templates():
         "huawei_vrpv8",
         "juniper_junos",
         "vyos",
+        "hp_procurve",
     ):
         profile = get_profile(device_type)
         assert profile.resolve_template().is_file(), device_type
@@ -40,7 +41,7 @@ def test_unsupported_platforms_explain_why():
     with pytest.raises(UnsupportedVendorError, match="Supported:"):
         get_profile("pfsense")
     assert not is_supported("fortinet") and is_supported("arista_eos")
-    assert is_supported("vyos") and is_supported("juniper_junos")
+    assert is_supported("vyos") and is_supported("juniper_junos") and is_supported("hp_procurve")
 
 
 @pytest.mark.parametrize(
@@ -54,6 +55,7 @@ def test_unsupported_platforms_explain_why():
         ("Huawei Versatile Routing Platform Software", "huawei"),
         ("Juniper Networks, Inc. mx204 Junos 22.4R2", "juniper_junos"),
         ("VyOS 1.3-rolling-201912230217", "vyos"),
+        ("ProCurve J9088A Switch 2610-48", "hp_procurve"),
         ("pfSense 2.7.2-RELEASE", None),
         ("", None),
     ],
@@ -243,8 +245,8 @@ FDP_ENTRY = {
 }
 
 
-def test_cisco_platforms_have_cdp_and_the_others_do_not():
-    for key in ("cisco_ios", "cisco_xe", "cisco_nxos", "cisco_xr"):
+def test_platforms_with_cdp_and_without():
+    for key in ("cisco_ios", "cisco_xe", "cisco_nxos", "cisco_xr", "hp_procurve"):
         assert list(get_profile(key).protocol_profiles()) == ["lldp", "cdp"], key
         assert get_profile(key).protocol_profiles()["cdp"].resolve_template().is_file()
     for key in ("arista_eos", "aruba_aoscx", "huawei", "juniper_junos", "vyos"):
@@ -264,6 +266,7 @@ def test_every_builtin_platform_has_an_interface_status_profile():
         "huawei_vrpv8",
         "juniper_junos",
         "vyos",
+        "hp_procurve",
     ):
         status = get_profile(key).status
         assert status is not None and status.resolve_template().is_file(), key

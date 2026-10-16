@@ -1,0 +1,33 @@
+
+  LLDP Remote Device Information Detail
+
+  Local Port   : A1
+  ChassisType  : mac-address
+  ChassisId    : aabbcc-112233
+  PortType     : interface-name
+  PortId       : GigabitEthernet1/0/10
+  SysName      : dist1.lab.local
+  System Descr : Cisco IOS Software
+  PortDescr    : dist1 uplink
+  Pvid         : 1
+  System Capabilities Supported : Bridge, Router
+  System Capabilities Enabled   : Bridge, Router
+  Remote Management Address
+     Type    : IPv4
+     Address : 10.0.1.1
+  --------------------------------------------------
+  Local Port   : A2
+  ChassisType  : mac-address
+  ChassisId    : aabbcc-445566
+  PortType     : interface-name
+  PortId       : eth0
+  SysName      : vyos-gw1.lab.local
+  System Descr : VyOS 1.4-rolling
+  PortDescr    : vyos eth0
+  Pvid         : 1
+  System Capabilities Supported : Router
+  System Capabilities Enabled   : Router
+  Remote Management Address
+     Type    : IPv4
+     Address : 10.0.3.1
+  --------------------------------------------------

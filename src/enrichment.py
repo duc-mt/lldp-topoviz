@@ -47,7 +47,15 @@ _PHONE_DESC = re.compile(r"\bphone\b|\bsip\b", re.IGNORECASE)
 # CDP / FDP report the hardware platform ("cisco AIR-AP2802I", "Cisco IP Phone 7960")
 _AP_PLATFORM = re.compile(r"\bAIR-|aironet|\bC9[1-3]\d{2}[A-Z]*AX", re.IGNORECASE)
 _PHONE_PLATFORM = re.compile(r"ip phone|\bphone\b", re.IGNORECASE)
-_SWITCH_TYPES = {"cisco_ios", "cisco_xe", "cisco_nxos", "arista_eos", "aruba_aoscx", "huawei"}
+_SWITCH_TYPES = {
+    "cisco_ios",
+    "cisco_xe",
+    "cisco_nxos",
+    "arista_eos",
+    "aruba_aoscx",
+    "huawei",
+    "hp_procurve",
+}
 
 
 @dataclass(frozen=True)
@@ -145,6 +153,7 @@ _OS_BY_DEVICE_TYPE = {
     "huawei_vrpv8": "VRP",
     "juniper_junos": "Junos",
     "vyos": "VyOS",
+    "hp_procurve": "ProCurve",
 }
 # Description keywords, most specific first (the description tells IOS from IOS-XE).
 _OS_KEYWORDS = (
@@ -157,6 +166,7 @@ _OS_KEYWORDS = (
     (re.compile(r"huawei|\bvrp\b", re.I), "VRP"),
     (re.compile(r"junos|juniper", re.I), "Junos"),
     (re.compile(r"\bvyos\b|\bvyatta\b", re.I), "VyOS"),
+    (re.compile(r"procurve|arubaos-s", re.I), "ProCurve"),
     (re.compile(r"pfsense", re.I), "pfSense"),
     (re.compile(r"fortios|fortigate", re.I), "FortiOS"),
     (re.compile(r"\bgaia\b|check ?point", re.I), "Gaia"),
@@ -174,6 +184,7 @@ _VERSION_PATTERNS = {
     "AOS-CX": r"(\d+\.\d+\.\d+)",
     "Junos": r"Junos:?\s+([\w.\-]+)",
     "VyOS": r"VyOS\s+([\w.\-]+)",
+    "ProCurve": r"revision\s+([\w.]+)",
     "pfSense": r"pfSense\s+([\d.]+)",
     "FortiOS": r"v?(\d+\.\d+\.\d+)",
 }

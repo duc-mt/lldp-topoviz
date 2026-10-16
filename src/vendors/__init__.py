@@ -321,6 +321,37 @@ register(
         error_markers=("syntax error", "unknown command", "error:"),
     )
 )
+register(
+    VendorProfile(
+        key="hp_procurve",
+        description="HP ProCurve / ArubaOS-S",
+        command="show lldp info remote-device detail",
+        template="hp_procurve_show_lldp_info_remote-device_detail.textfsm",
+        fields=FieldMap(
+            neighbor_name=("NEIGHBOR_NAME",),
+            neighbor_interface=("NEIGHBOR_INTERFACE",),
+            chassis_id=("CHASSIS_ID",),
+            mgmt_address=("MGMT_ADDRESS",),
+            capabilities=("CAPABILITIES",),
+        ),
+        error_markers=("Invalid input", "% Unknown command", "Command incomplete"),
+        protocols=(
+            ProtocolProfile(
+                name="cdp",
+                command="show cdp neighbors detail",
+                template="hp_procurve_show_cdp_neighbors_detail.textfsm",
+                fields=FieldMap(
+                    neighbor_name=("CHASSIS_ID",),
+                    neighbor_interface=("NEIGHBOR_INTERFACE",),
+                    mgmt_address=("MGMT_ADDRESS",),
+                    capabilities=("CAPABILITIES",),
+                    description=("PLATFORM",),
+                ),
+                error_markers=("Invalid input", "% Unknown command", "Command incomplete"),
+            ),
+        ),
+    )
+)
 
 _EOS_ERRORS = ("% Invalid input", "% Incomplete command", "% Ambiguous command")
 _LAG_PROFILES = {
@@ -446,6 +477,12 @@ _STATUS_PROFILES = {
         parse_vyos_interfaces,
         ("Invalid command", "Unknown command", "Command incomplete"),
     ),
+    ("hp_procurve",): StatusProfile(
+        "show interfaces status",
+        "hp_procurve_show_interfaces_status.textfsm",
+        parse_status_table,
+        ("Invalid input", "% Unknown command", "Command incomplete"),
+    ),
 }
 for _device_types, _status in _STATUS_PROFILES.items():
     for _device_type in _device_types:
@@ -499,6 +536,7 @@ DEFAULT_DEVICE_TYPE_RULES: tuple[tuple[str, str], ...] = (
     (r"huawei|\bvrp\b", "huawei"),
     (r"junos|juniper", "juniper_junos"),
     (r"vyos|\bvyatta\b", "vyos"),
+    (r"procurve|arubaos-s", "hp_procurve"),
     (r"fortios|fortigate", "fortinet"),
 )
 
