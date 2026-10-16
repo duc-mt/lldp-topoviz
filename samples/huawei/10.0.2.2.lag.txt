@@ -1,0 +1,17 @@
+Eth-Trunk1's state information is:
+Local:
+LAG ID: 1                   WorkingMode: LACP
+Preempt Delay: Disabled     Hash arithmetic: According to SIP-XOR-DIP
+System Priority: 32768      System ID: 4c1f-cc00-0001
+Least Active-linknumber: 1  Max Active-linknumber: 8
+Operate status: up          Number Of Up Port In Trunk: 2
+--------------------------------------------------------------------------------
+ActorPortName          Status   PortType PortPri PortNo PortKey PortState Weight
+GigabitEthernet0/0/23  Selected 1GE      32768   1      305     10111100  1
+GigabitEthernet0/0/24  Selected 1GE      32768   2      305     10111100  1
+
+Partner:
+--------------------------------------------------------------------------------
+ActorPortName          SysPri   SystemID        PortPri PortNo PortKey PortState
+GigabitEthernet0/0/23  32768    0c4d-e900-0a01  32768   1      305     10111100
+GigabitEthernet0/0/24  32768    0c4d-e900-0a01  32768   2      305     10111100

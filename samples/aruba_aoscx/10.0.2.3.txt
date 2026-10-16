@@ -1,0 +1,30 @@
+Port                                    : 1/1/1
+Neighbor Entries                        : 1
+Neighbor Entries Deleted                : 0
+Neighbor Entries Dropped                : 0
+Neighbor Entries Aged-Out               : 0
+Neighbor Chassis-Name                   : dist1.lab.local
+Neighbor Chassis-Description            : Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+Neighbor Chassis-ID                     : 0c:4d:e9:00:0a:01
+Neighbor Management-Address             : 10.0.1.1
+Chassis Capabilities Available          : Bridge, Router
+Chassis Capabilities Enabled            : Bridge, Router
+Neighbor Port-ID                        : Eth1/12
+Neighbor Port-Desc                      : Ethernet1/12 to acc3
+TTL                                     : 120
+--------------------------------------------------------------------------------
+Port                                    : 1/1/2
+Neighbor Entries                        : 1
+Neighbor Entries Deleted                : 0
+Neighbor Entries Dropped                : 0
+Neighbor Entries Aged-Out               : 0
+Neighbor Chassis-Name                   : dist1.lab.local
+Neighbor Chassis-Description            : Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+Neighbor Chassis-ID                     : 0c:4d:e9:00:0a:01
+Neighbor Management-Address             : 10.0.1.1
+Chassis Capabilities Available          : Bridge, Router
+Chassis Capabilities Enabled            : Bridge, Router
+Neighbor Port-ID                        : Eth1/16
+Neighbor Port-Desc                      : Ethernet1/16 to acc3
+TTL                                     : 120
+--------------------------------------------------------------------------------

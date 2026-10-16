@@ -1,0 +1,58 @@
+Interface Ethernet1 detected 1 LLDP neighbors:
+
+  Neighbor 0c4d.e900.0a01/Eth1/10, age 25 seconds
+  Discovered 2:03:20 ago; Last changed 2:03:20 ago
+  - Chassis ID type: MAC address (4)
+    Chassis ID     : 0c4d.e900.0a01
+  - Port ID type: Interface name (5)
+    Port ID        : "Eth1/10"
+  - Time To Live: 120 seconds
+  - Port Description: "Ethernet1/10 to acc1"
+  - System Name: "dist1.lab.local"
+  - System Description: "Cisco Nexus Operating System (NX-OS) Software 9.3(8)"
+  - System Capabilities : Bridge, Router
+    Enabled Capabilities: Bridge, Router
+  - Management Address Subtype: IPv4 (1)
+    Management Address        : 10.0.1.1
+    Interface Number Subtype  : ifIndex (2)
+    Interface Number          : 1
+    OID String                : 
+  - IEEE802.1 Port VLAN ID: 1
+
+Interface Ethernet2 detected 1 LLDP neighbors:
+
+  Neighbor 0c4d.e900.0a01/Eth1/14, age 25 seconds
+  Discovered 2:03:20 ago; Last changed 2:03:20 ago
+  - Chassis ID type: MAC address (4)
+    Chassis ID     : 0c4d.e900.0a01
+  - Port ID type: Interface name (5)
+    Port ID        : "Eth1/14"
+  - Time To Live: 120 seconds
+  - Port Description: "Ethernet1/14 to acc1"
+  - System Name: "dist1.lab.local"
+  - System Description: "Cisco Nexus Operating System (NX-OS) Software 9.3(8)"
+  - System Capabilities : Bridge, Router
+    Enabled Capabilities: Bridge, Router
+  - Management Address Subtype: IPv4 (1)
+    Management Address        : 10.0.1.1
+    Interface Number Subtype  : ifIndex (2)
+    Interface Number          : 1
+    OID String                : 
+  - IEEE802.1 Port VLAN ID: 1
+
+Interface Ethernet5 detected 1 LLDP neighbors:
+
+  Neighbor a0f3.c100.0042/eth0, age 25 seconds
+  Discovered 2:03:20 ago; Last changed 2:03:20 ago
+  - Chassis ID type: MAC address (4)
+    Chassis ID     : a0f3.c100.0042
+  - Port ID type: Interface name (5)
+    Port ID        : "eth0"
+  - Time To Live: 120 seconds
+  - Port Description: "wired0"
+  - System Name: "ap-lobby"
+  - System Description: "Aruba AP-535"
+  - System Capabilities : Bridge, Router
+    Enabled Capabilities: Bridge, Router
+  - IEEE802.1 Port VLAN ID: 1
+

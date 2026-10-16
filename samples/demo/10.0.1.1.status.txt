@@ -1,0 +1,13 @@
+--------------------------------------------------------------------------------
+Port          Name               Status    Vlan      Duplex  Speed   Type
+--------------------------------------------------------------------------------
+Eth1/1        core1 Po1          connected trunk     full    1000    10/100/1000BaseT
+Eth1/2        core1 Po1          connected trunk     full    1000    10/100/1000BaseT
+Eth1/3        core2 Po2          connected trunk     full    1000    10/100/1000BaseT
+Eth1/4        core2 Po2          connected trunk     full    1000    10/100/1000BaseT
+Eth1/10       acc1 A             connected trunk     full    10G     10Gbase-SR
+Eth1/14       acc1 B             connected trunk     full    10G     10Gbase-SR
+Eth1/11       acc2 A             connected trunk     full    1000    10/100/1000BaseT
+Eth1/15       acc2 B             connected trunk     full    1000    10/100/1000BaseT
+Eth1/12       acc3 A             connected trunk     full    1000    10/100/1000BaseT
+Eth1/16       acc3 B             connected trunk     full    1000    10/100/1000BaseT

@@ -1,0 +1,65 @@
+-------------------------
+Device ID: dist1.lab.local
+Entry address(es): 
+  IP address: 10.0.1.1
+Platform: cisco N9K-C93180YC-FX,  Capabilities: Router Switch IGMP Filtering Supports-STP-Dispute
+Interface: GigabitEthernet1/0/1,  Port ID (outgoing port): Ethernet1/1
+Holdtime : 143 sec
+
+Version :
+Cisco Nexus Operating System (NX-OS) Software, Version 9.3(8)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.1.1
+
+-------------------------
+Device ID: dist1.lab.local
+Entry address(es): 
+  IP address: 10.0.1.1
+Platform: cisco N9K-C93180YC-FX,  Capabilities: Router Switch IGMP Filtering Supports-STP-Dispute
+Interface: GigabitEthernet1/0/2,  Port ID (outgoing port): Ethernet1/2
+Holdtime : 143 sec
+
+Version :
+Cisco Nexus Operating System (NX-OS) Software, Version 9.3(8)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.1.1
+
+-------------------------
+Device ID: core2.lab.local
+Entry address(es): 
+  IP address: 10.0.0.2
+Platform: cisco C9300-48P,  Capabilities: Router Switch IGMP
+Interface: GigabitEthernet1/0/47,  Port ID (outgoing port): GigabitEthernet1/0/47
+Holdtime : 143 sec
+
+Version :
+Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.0.2
+
+-------------------------
+Device ID: sw-legacy.lab.local
+Entry address(es): 
+  IP address: 10.0.0.30
+Platform: cisco WS-C2960G-24TC-L,  Capabilities: Switch IGMP
+Interface: GigabitEthernet1/0/20,  Port ID (outgoing port): GigabitEthernet0/1
+Holdtime : 143 sec
+
+Version :
+Cisco IOS Software, C2960 Software (C2960-LANBASEK9-M), Version 15.0(2)SE11, RELEASE SOFTWARE (fc3)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.0.30
+
+Total cdp entries displayed : 4

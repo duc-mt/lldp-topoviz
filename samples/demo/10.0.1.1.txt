@@ -1,0 +1,131 @@
+Chassis id: 0c4d.e900.0101
+Port id: Gi1/0/1
+Local Port id: Eth1/1
+Port Description: GigabitEthernet1/0/1
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.1
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0101
+Port id: Gi1/0/2
+Local Port id: Eth1/2
+Port Description: GigabitEthernet1/0/2
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.1
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0201
+Port id: Gi1/0/1
+Local Port id: Eth1/3
+Port Description: GigabitEthernet1/0/1
+System Name: core2.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.2
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0201
+Port id: Gi1/0/2
+Local Port id: Eth1/4
+Port Description: GigabitEthernet1/0/2
+System Name: core2.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.2
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.1001
+Port id: Ethernet1
+Local Port id: Eth1/10
+Port Description: uplink A
+System Name: acc1
+System Description: Arista Networks EOS version 4.28.3M running on an Arista Networks DCS-7050SX-64
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.1
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.1001
+Port id: Ethernet2
+Local Port id: Eth1/14
+Port Description: uplink B
+System Name: acc1
+System Description: Arista Networks EOS version 4.28.3M running on an Arista Networks DCS-7050SX-64
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.1
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 4c1f.cc00.0001
+Port id: GigabitEthernet0/0/24
+Local Port id: Eth1/11
+Port Description: GigabitEthernet0/0/24
+System Name: acc2
+System Description: Huawei Versatile Routing Platform Software VRP (R) software, Version 5.170 (S5720 V200R011C10SPC600)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.2
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 4c1f.cc00.0001
+Port id: GigabitEthernet0/0/23
+Local Port id: Eth1/15
+Port Description: GigabitEthernet0/0/23
+System Name: acc2
+System Description: Huawei Versatile Routing Platform Software VRP (R) software, Version 5.170 (S5720 V200R011C10SPC600)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.2
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0800.09aa.bb03
+Port id: 1/1/1
+Local Port id: Eth1/12
+Port Description: uplink A
+System Name: acc3
+System Description: ArubaOS-CX 6200F 10.10.1010
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.3
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0800.09aa.bb03
+Port id: 1/1/2
+Local Port id: Eth1/16
+Port Description: uplink B
+System Name: acc3
+System Description: ArubaOS-CX 6200F 10.10.1010
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.2.3
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Total entries displayed: 10

@@ -1,0 +1,4 @@
+10.0.2.2:
+  file: 10.0.2.2.txt
+  hostname: acc2
+  device_type: huawei

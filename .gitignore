@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets: never commit credentials
+config/settings.yaml
+!config/settings.yaml.example
+config/settings.local.yaml
+.env
+*.env
+
+# Generated output
+data/*.json
+data/*.json.tmp
+output/*
+!output/.gitkeep
+
+# Raw captures from real devices may contain sensitive data: review before committing
+captures/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

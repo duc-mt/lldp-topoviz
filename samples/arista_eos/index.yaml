@@ -1,0 +1,4 @@
+10.0.2.1:
+  file: 10.0.2.1.txt
+  hostname: acc1
+  device_type: arista_eos

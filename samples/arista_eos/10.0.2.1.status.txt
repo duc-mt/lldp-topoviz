@@ -1,0 +1,4 @@
+Port       Name   Status       Vlan     Duplex Speed  Type            Flags Encapsulation
+Et1        uplinkA connected    trunk    full   10G    10GBASE-SR
+Et2        uplinkB connected    trunk    full   10G    10GBASE-SR
+Et5        ap     connected    10       full   1000   1000BASE-T

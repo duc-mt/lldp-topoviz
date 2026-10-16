@@ -1,0 +1,9 @@
+seed:
+  host: 10.0.2.2
+  device_type: huawei
+crawl:
+  allowed_subnets:
+  - 10.0.0.0/8
+  max_depth: 0
+visualization:
+  layout: hierarchical

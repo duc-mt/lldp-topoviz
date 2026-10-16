@@ -1,0 +1,20 @@
+GigabitEthernet0/0/23 current state : UP
+Line protocol current state : UP
+Description:to dist1
+Switch Port, PVID :    1, TPID : 8100(Hex), The Maximum Frame Length is 9216
+IP Sending Frames' Format is PKTFMT_ETHNT_2, Hardware address is 4c1f-cc00-0017
+Port Mode: COMMON COPPER
+Speed : 100,  Loopback: NONE
+Duplex: FULL,  Negotiation: ENABLE
+Mdi   : AUTO, Clock : AUTO
+
+GigabitEthernet0/0/24 current state : UP
+Line protocol current state : UP
+Description:to dist1
+Switch Port, PVID :    1, TPID : 8100(Hex), The Maximum Frame Length is 9216
+IP Sending Frames' Format is PKTFMT_ETHNT_2, Hardware address is 4c1f-cc00-0017
+Port Mode: COMMON COPPER
+Speed : 1000,  Loopback: NONE
+Duplex: FULL,  Negotiation: ENABLE
+Mdi   : AUTO, Clock : AUTO
+

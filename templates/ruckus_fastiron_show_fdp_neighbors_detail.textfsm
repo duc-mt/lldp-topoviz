@@ -1,0 +1,36 @@
+# Ruckus / Brocade FastIron (ICX): show fdp neighbors detail
+#
+# Reads the Cisco neighbors an ICX learned through CDP/FDP. Derived from the ntc-templates
+# template cisco_ios_show_cdp_neighbors_detail (Apache License 2.0,
+# https://github.com/networktocode/ntc-templates), changed to
+#   - accept one or two spaces after the comma in "Interface: Eth 1/1, Port ID ..." (the
+#     FastIron 08.0.30 documentation prints two, 08.0.60 prints one),
+#   - skip the blank line that follows "Version :".
+# Checked only against the output samples printed in the Ruckus FastIron documentation, not
+# against hardware. It does not read the Ruckus-to-Ruckus layout of "Verifying FDP", where
+# "Interface:" and "Port ID" are on separate lines.
+Value Required NEIGHBOR_NAME (\S+)
+Value MGMT_ADDRESS (\d+\.\d+\.\d+\.\d+|\w+\.\w+\.\w+)
+Value PLATFORM (.*)
+Value NEIGHBOR_INTERFACE (.*?)
+Value LOCAL_INTERFACE (.*?)
+Value NEIGHBOR_DESCRIPTION (.*$)
+Value CAPABILITIES (.+?)
+
+Start
+  ^Device ID: ${NEIGHBOR_NAME}
+  ^Entry address\(es\)\s*:\s* -> ParseIP
+  ^Platform\s*:\s*${PLATFORM}\s*,\s*Capabilities\s*:\s*${CAPABILITIES}\s+$$
+  ^Platform\s*:\s*${PLATFORM}\s*,\s*Capabilities\s*:\s*${CAPABILITIES}$$
+  ^Interface:\s+${LOCAL_INTERFACE},\s+Port ID \(outgoing port\):\s+${NEIGHBOR_INTERFACE}\s*$$
+  ^Version\s*: -> GetVersion
+
+ParseIP
+  ^.*IP address: ${MGMT_ADDRESS} -> Start
+  ^Platform\s*:\s*${PLATFORM}\s*,\s*Capabilities\s*:\s*${CAPABILITIES}\s+$$ -> Start
+  ^Platform\s*:\s*${PLATFORM}\s*,\s*Capabilities\s*:\s*${CAPABILITIES}$$ -> Start
+  ^.* -> Start
+
+GetVersion
+  ^\s*$$
+  ^${NEIGHBOR_DESCRIPTION} -> Record Start

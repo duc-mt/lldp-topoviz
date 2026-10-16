@@ -1,0 +1,38 @@
+Interface 1/1/1 is up
+ Admin state is up
+ Link state: up for 1 day (since Sun Oct 11 09:00:00 UTC 2026)
+ Link transitions: 1
+ Description: to dist1
+ Hardware: Ethernet, MAC Address: 08:00:09:aa:bb:03
+ MTU 1500
+ Type 1GbT
+ Half-duplex
+ qos trust none
+ Speed 1000 Mb/s
+ Auto-negotiation is on
+ Flow-control: off
+ Error-control: off
+ MDI mode: MDIX
+ VLAN Mode: native-untagged
+ Native VLAN: 1
+ Allowed VLAN List: 1-4094
+
+Interface 1/1/2 is up
+ Admin state is up
+ Link state: up for 1 day (since Sun Oct 11 09:00:00 UTC 2026)
+ Link transitions: 1
+ Description: to dist1
+ Hardware: Ethernet, MAC Address: 08:00:09:aa:bb:03
+ MTU 1500
+ Type 1GbT
+ Full-duplex
+ qos trust none
+ Speed 1000 Mb/s
+ Auto-negotiation is on
+ Flow-control: off
+ Error-control: off
+ MDI mode: MDIX
+ VLAN Mode: native-untagged
+ Native VLAN: 1
+ Allowed VLAN List: 1-4094
+

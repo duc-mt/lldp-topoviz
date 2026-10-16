@@ -1,0 +1,36 @@
+GigabitEthernet0/0/24 has 1 neighbor(s):
+
+Neighbor index   :1
+Chassis type     :MAC address
+Chassis ID       :0c4d-e900-0a01
+Port ID type     :Interface name
+Port ID          :Eth1/11
+Port description :Ethernet1/11 to acc2
+System name      :dist1.lab.local
+System description :Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+System capabilities supported :bridge,router
+System capabilities enabled   :bridge,router
+Management address type       :ipv4
+Management address            :10.0.1.1
+Expired time     :115s
+
+Port VLAN ID(PVID)            :1
+
+GigabitEthernet0/0/23 has 1 neighbor(s):
+
+Neighbor index   :2
+Chassis type     :MAC address
+Chassis ID       :0c4d-e900-0a01
+Port ID type     :Interface name
+Port ID          :Eth1/15
+Port description :Ethernet1/15 to acc2
+System name      :dist1.lab.local
+System description :Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+System capabilities supported :bridge,router
+System capabilities enabled   :bridge,router
+Management address type       :ipv4
+Management address            :10.0.1.1
+Expired time     :115s
+
+Port VLAN ID(PVID)            :1
+

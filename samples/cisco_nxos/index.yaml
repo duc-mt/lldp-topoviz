@@ -1,0 +1,4 @@
+10.0.1.1:
+  file: 10.0.1.1.txt
+  hostname: dist1
+  device_type: cisco_nxos

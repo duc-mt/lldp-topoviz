@@ -1,0 +1,106 @@
+# ==============================================================================
+# LLDP Topology Mapper - settings
+# ------------------------------------------------------------------------------
+# Credentials: leave username/password empty here and export
+#   LLDP_MAPPER_USERNAME, LLDP_MAPPER_PASSWORD [, LLDP_MAPPER_SECRET]
+# instead. Environment variables always override this file.
+# ==============================================================================
+
+# Where the crawl starts. --seed / --device-type on the command line win.
+seed:
+  host: ""                 # IP or DNS name of the seed device
+  device_type: cisco_ios   # cisco_ios, cisco_xe, cisco_nxos, cisco_xr, arista_eos,
+                           # aruba_aoscx, huawei (plus anything under custom_vendors)
+
+# SSH credentials and timeouts, shared by every device in the crawl.
+device:
+  username: ""
+  password: ""
+  secret: ""               # enable secret, only if your devices need one
+  port: 22
+  conn_timeout: 15
+  auth_timeout: 20
+  banner_timeout: 20
+  read_timeout: 60
+
+# Crawl scope. The crawler sends your credentials to every device it visits,
+# so allowed_subnets is REQUIRED: nothing outside it is ever contacted.
+crawl:
+  allowed_subnets:
+    - 10.0.0.0/8
+  max_depth: 10            # hops from the seed (seed = 0, null = unlimited)
+  max_devices: 200         # most devices to log in to (null = unlimited)
+  exclude_hostnames: []    # regexes; matching neighbors are shown but never crawled
+  #  - "^ap-"
+  require_capabilities:    # crawl only neighbors advertising one of these
+    - router               # (ignored when the neighbor advertises none we recognise)
+    - bridge
+  discovery: [lldp, cdp]      # neighbor-discovery protocols, in priority order; results are merged.
+                              # A protocol the platform lacks is skipped; one that fails is tolerated
+                              # as long as another works. Add your own under custom_vendors.protocols.
+  collect_port_channels: true # also read port-channels (one extra command per device) to draw LAGs
+  collect_interface_status: true # also read each port's speed/duplex (one extra command) for link checks
+  default_device_type: null   # for neighbors we cannot identify; null = same as the seed
+  device_type_rules: []       # tried before the built-in rules, first match wins
+  #  - pattern: "ruckus"
+  #    device_type: ruckus_fastiron
+  device_overrides: {}        # per neighbor (hostname or IP): force a type and/or address
+  #  edge-fw:
+  #    device_type: cisco_ios
+  #    host: 10.0.0.250
+  name_to_ip: {}              # management IP for neighbors that do not advertise one
+  #  access-sw-07: 10.0.7.7
+
+# Link checks: warn about links that do not run as their ports should. They use the speed and duplex
+# each device reports for its own ports (see crawl.collect_interface_status).
+link_checks:
+  enabled: true
+  ignore_ports: []        # regexes on interface names whose findings you accept, e.g. "^Fa" (100M by design)
+  ignore_hostnames: []    # regexes on device names whose ports are never judged
+
+# How the diagram looks.
+visualization:
+  layout: hierarchical          # hierarchical (Edge/Core/Distribution/Access/End rows) | physics
+  root: ""                      # device to treat as Core when no hostname matches a tier (default: the seed)
+  tiers: {}                     # hostname regexes per tier; a tier you list REPLACES its default patterns
+  #  core: ["^bb", "^cr-"]      # tiers: edge, core, distribution, access (end devices are found by type)
+  #  distribution: ["^dist", "^agg"]
+  #  access: ["^acc", "^sw"]
+  node_types: {}                # force an icon by hostname regex:
+  #  firewall: ["^gw-", "^fgt"] # switch, router, firewall, ap, phone, endpoint, unknown
+  height: 900px
+  width: 100%
+  bgcolor: "#ffffff"
+  font_color: "#1f2933"
+  port_labels: true             # interface names at both ends of every link
+  collapse_parallel_links: false # true: merge parallel links that are NOT in a port-channel (x2, x3 ...)
+  inline_resources: true        # embed vis-network in the HTML so it opens offline
+
+# Platforms without a built-in LLDP profile (e.g. Junos, FortiOS). Each entry maps a
+# Netmiko device type to a command, a TextFSM template and its column names.
+# Template paths are relative to the project directory.
+custom_vendors: {}
+#  juniper_junos:
+#    description: Juniper Junos with a custom template that captures the management IP
+#    command: show lldp neighbors
+#    template: templates/juniper_junos_show_lldp_neighbors_mgmt.textfsm
+#    fields:                    # TextFSM column names (a list = first non-empty wins)
+#      local_interface: LOCAL_INTERFACE
+#      neighbor_name: NEIGHBOR_NAME
+#      neighbor_interface: NEIGHBOR_INTERFACE
+#      chassis_id: CHASSIS_ID
+#      mgmt_address: MGMT_ADDRESS
+#    error_markers: ["syntax error", "unknown command"]
+
+# Example: a vendor protocol with no LLDP part. Ruckus / Brocade ICX reads the Cisco neighbors it learned
+# through CDP / FDP. Add fdp to crawl.discovery and set a device type for such neighbors with
+# crawl.device_overrides. The template is checked against the vendor documentation's samples only.
+#  ruckus_fastiron:
+#    description: Ruckus ICX (FDP)
+#    protocols:
+#      fdp:
+#        command: show fdp neighbors detail
+#        template: templates/ruckus_fastiron_show_fdp_neighbors_detail.textfsm
+#        fields: {local_interface: LOCAL_INTERFACE, neighbor_name: NEIGHBOR_NAME,
+#                 neighbor_interface: NEIGHBOR_INTERFACE, mgmt_address: MGMT_ADDRESS,
+#                 description: NEIGHBOR_DESCRIPTION, capabilities: CAPABILITIES, platform: PLATFORM}

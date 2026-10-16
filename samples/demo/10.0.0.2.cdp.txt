@@ -1,0 +1,49 @@
+-------------------------
+Device ID: core1.lab.local
+Entry address(es): 
+  IP address: 10.0.0.1
+Platform: cisco C9300-48P,  Capabilities: Router Switch IGMP
+Interface: GigabitEthernet1/0/47,  Port ID (outgoing port): GigabitEthernet1/0/47
+Holdtime : 143 sec
+
+Version :
+Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.0.1
+
+-------------------------
+Device ID: dist1.lab.local
+Entry address(es): 
+  IP address: 10.0.1.1
+Platform: cisco N9K-C93180YC-FX,  Capabilities: Router Switch IGMP Filtering Supports-STP-Dispute
+Interface: GigabitEthernet1/0/1,  Port ID (outgoing port): Ethernet1/3
+Holdtime : 143 sec
+
+Version :
+Cisco Nexus Operating System (NX-OS) Software, Version 9.3(8)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.1.1
+
+-------------------------
+Device ID: dist1.lab.local
+Entry address(es): 
+  IP address: 10.0.1.1
+Platform: cisco N9K-C93180YC-FX,  Capabilities: Router Switch IGMP Filtering Supports-STP-Dispute
+Interface: GigabitEthernet1/0/2,  Port ID (outgoing port): Ethernet1/4
+Holdtime : 143 sec
+
+Version :
+Cisco Nexus Operating System (NX-OS) Software, Version 9.3(8)
+
+advertisement version: 2
+Duplex: full
+Management address(es): 
+  IP address: 10.0.1.1
+
+Total cdp entries displayed : 3

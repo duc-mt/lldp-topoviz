@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["UP038"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff.lint.per-file-ignores]
+"src/diagram_assets.py" = ["E501"]  # embedded CSS / JavaScript
+"src/icons.py" = ["E501"]  # SVG path data
+"src/visualizer.py" = ["E501"]  # embedded HTML templates
+"tests/*" = ["E501"]  # long parametrize tables and sample strings

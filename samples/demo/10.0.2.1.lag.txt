@@ -1,0 +1,14 @@
+Flags
+  a - LACP Active            p - LACP Passive           
+  S - Static                 U - In Use                 
+  D - Down                   + - In-Sync                
+  - - Out-of-Sync            i - Individual             
+  w - Wait for agg           s - Suspended              
+  c - Channel in Use         g - Aggregable             
+
+Number of channels in use: 1
+Number of aggregators: 1
+
+   Port-Channel       Protocol    Ports
+------------------ -------------- -----------------
+   Po1(U)             LACP(a)     Et1(PG+) Et2(PG+) 

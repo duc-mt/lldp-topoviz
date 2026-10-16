@@ -1,0 +1,30 @@
+# host -> capture file, the device's own hostname, and its Netmiko device type.
+# 10.0.0.250 (fw1) is deliberately absent: the crawl shows it as a failed device.
+10.0.0.1:
+  file: 10.0.0.1.txt
+  hostname: core1
+  device_type: cisco_ios
+10.0.0.2:
+  file: 10.0.0.2.txt
+  hostname: core2
+  device_type: cisco_xe
+10.0.1.1:
+  file: 10.0.1.1.txt
+  hostname: dist1
+  device_type: cisco_nxos
+10.0.2.1:
+  file: 10.0.2.1.txt
+  hostname: acc1
+  device_type: arista_eos
+10.0.2.2:
+  file: 10.0.2.2.txt
+  hostname: acc2
+  device_type: huawei
+10.0.2.3:
+  file: 10.0.2.3.txt
+  hostname: acc3
+  device_type: aruba_aoscx
+# A legacy switch with no LLDP at all: only its CDP, interface and port-channel captures exist.
+10.0.0.30:
+  hostname: sw-legacy
+  device_type: cisco_ios

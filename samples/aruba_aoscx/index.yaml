@@ -1,0 +1,4 @@
+10.0.2.3:
+  file: 10.0.2.3.txt
+  hostname: acc3
+  device_type: aruba_aoscx

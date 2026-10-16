@@ -1,0 +1,4 @@
+10.0.0.1:
+  file: 10.0.0.1.txt
+  hostname: core1
+  device_type: cisco_ios

@@ -1,0 +1,14 @@
+# Settings for the bundled replay demo:
+#   python3 main.py --config samples/demo/settings.yaml --replay samples/demo
+seed:
+  host: 10.0.0.1
+  device_type: cisco_ios
+
+crawl:
+  allowed_subnets:
+    - 10.0.0.0/16
+  max_depth: 10
+  max_devices: 50
+
+visualization:
+  layout: hierarchical      # Core on top; physics = force-directed

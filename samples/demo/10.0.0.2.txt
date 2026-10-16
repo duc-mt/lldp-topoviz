@@ -1,0 +1,61 @@
+------------------------------------------------
+Local Intf: Gi1/0/47
+Chassis id: 0c4d.e900.0101
+Port id: Gi1/0/47
+Port Description: GigabitEthernet1/0/47
+System Name: core1.lab.local
+
+System Description: 
+Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.0.1
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+------------------------------------------------
+Local Intf: Gi1/0/1
+Chassis id: 0c4d.e900.0a01
+Port id: Eth1/3
+Port Description: to core2 Po2
+System Name: dist1.lab.local
+
+System Description: 
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.1
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+------------------------------------------------
+Local Intf: Gi1/0/2
+Chassis id: 0c4d.e900.0a01
+Port id: Eth1/4
+Port Description: to core2 Po2
+System Name: dist1.lab.local
+
+System Description: 
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.1
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+Total entries displayed: 3
