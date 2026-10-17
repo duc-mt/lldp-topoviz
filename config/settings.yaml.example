@@ -1,5 +1,5 @@
 # ==============================================================================
-# LLDP Topology Mapper - settings
+# LLDP TopoViz - settings
 # ------------------------------------------------------------------------------
 # Credentials: leave username/password empty here and export
 #   LLDP_MAPPER_USERNAME, LLDP_MAPPER_PASSWORD [, LLDP_MAPPER_SECRET]

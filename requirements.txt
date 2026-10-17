@@ -1,4 +1,4 @@
-# LLDP Topology Mapper - runtime dependencies
+# LLDP TopoViz - runtime dependencies
 netmiko>=4.3,<5        # SSH transport + use_textfsm integration
 ntc-templates>=7.0     # TextFSM templates (Netmiko pulls it in; pinned for the template names)
 networkx>=3.0          # topology graph

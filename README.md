@@ -1,4 +1,4 @@
-# LLDP Topology Mapper
+# LLDP TopoViz
 
 Crawl a network over LLDP and CDP from one seed device and draw it as an interactive HTML diagram.
 

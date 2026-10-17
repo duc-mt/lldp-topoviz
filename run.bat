@@ -1,7 +1,7 @@
 @echo off
 rem ==============================================================================
 rem Script Name:   run.bat
-rem Description:   Universal launcher for LLDP Topology Mapper on Windows (CMD/PowerShell).
+rem Description:   Universal launcher for LLDP TopoViz on Windows (CMD/PowerShell).
 rem Author:        Mai Tan Duc <ducmai.network@gmail.com>
 rem Created:       2026-10-10
 rem Version:       1.0.0

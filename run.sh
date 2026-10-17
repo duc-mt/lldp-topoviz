@@ -1,7 +1,7 @@
 #!/bin/sh
 # ==============================================================================
 # Script Name:   run.sh
-# Description:   Universal launcher for LLDP Topology Mapper (Linux/macOS/WSL).
+# Description:   Universal launcher for LLDP TopoViz (Linux/macOS/WSL).
 # Author:        Mai Tan Duc <ducmai.network@gmail.com>
 # Created:       2026-10-10
 # Version:       1.0.0
