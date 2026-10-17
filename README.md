@@ -41,31 +41,28 @@ Structure, CLI, logging, error handling and config management deliberately mirro
 
 ## Quick start
 
-The easiest way to run is via the universal launcher script (`./run.sh` on Linux/macOS or `run.bat` on Windows), which automatically initializes `.venv`, installs locked dependencies, and creates `config/settings.yaml` from template on first run:
+The easiest way to run is via the universal launcher script (`./run` on Linux/macOS or `.\scripts\run.bat` on native Windows CMD), which automatically initializes `.venv`, installs locked dependencies, and creates `config/settings.yaml` from template on first run:
 
 ```bash
 # Try the full multi-vendor demo (6 devices across Cisco, Arista, Huawei, Aruba):
-./run.sh --config samples/demo/settings.yaml --replay samples/demo
+./run --config samples/demo/settings.yaml --replay samples/demo
 
 # Or replay specific vendor samples:
-./run.sh --config samples/cisco_ios/settings.yaml --replay samples/cisco_ios
-./run.sh --config samples/cisco_nxos/settings.yaml --replay samples/cisco_nxos
-./run.sh --config samples/arista_eos/settings.yaml --replay samples/arista_eos
-./run.sh --config samples/huawei/settings.yaml --replay samples/huawei
-./run.sh --config samples/aruba_aoscx/settings.yaml --replay samples/aruba_aoscx
-./run.sh --config samples/vyos/settings.yaml --replay samples/vyos
-./run.sh --config samples/juniper_junos/settings.yaml --replay samples/juniper_junos
-./run.sh --config samples/hp_procurve/settings.yaml --replay samples/hp_procurve
-
-# Windows (CMD / PowerShell):
-# run.bat --config samples\cisco_ios\settings.yaml --replay samples\cisco_ios
+./run --config samples/cisco_ios/settings.yaml --replay samples/cisco_ios
+./run --config samples/cisco_nxos/settings.yaml --replay samples/cisco_nxos
+./run --config samples/arista_eos/settings.yaml --replay samples/arista_eos
+./run --config samples/huawei/settings.yaml --replay samples/huawei
+./run --config samples/aruba_aoscx/settings.yaml --replay samples/aruba_aoscx
+./run --config samples/vyos/settings.yaml --replay samples/vyos
+./run --config samples/juniper_junos/settings.yaml --replay samples/juniper_junos
+./run --config samples/hp_procurve/settings.yaml --replay samples/hp_procurve
 
 open output/topology.html          # or xdg-open / start
 
 # Real network:
 export LLDP_MAPPER_USERNAME=admin
 export LLDP_MAPPER_PASSWORD='...'
-./run.sh --seed 10.0.0.1 --device-type cisco_ios --allow 10.0.0.0/16
+./run --seed 10.0.0.1 --device-type cisco_ios --allow 10.0.0.0/16
 ```
 
 You can also run directly with Python:
