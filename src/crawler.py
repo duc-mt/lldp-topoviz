@@ -231,8 +231,20 @@ class Crawler:
         ``failed`` nodes and do not stop the crawl.
 
         Raises:
-            CrawlError: If not a single device could be crawled (nothing to draw).
+            CrawlError: If the seed device is outside allowed subnets or could not be crawled.
         """
+        seed_ip = self.seed_host.strip() if is_ipv4(self.seed_host) else None
+        if not seed_ip:
+            name_key = normalize_hostname(self.seed_host)
+            override = self.config.device_overrides.get(name_key)
+            if override and override.get("host") and is_ipv4(override["host"]):
+                seed_ip = override["host"].strip()
+            elif name_key in self.config.name_to_ip and is_ipv4(self.config.name_to_ip[name_key]):
+                seed_ip = self.config.name_to_ip[name_key].strip()
+
+        if seed_ip and not self.config.in_scope(seed_ip):
+            raise CrawlError(f"Seed device {self.seed_host} is outside crawl.allowed_subnets")
+
         started = time.monotonic()
         result = CrawlResult(seed=self.seed_host)
         queue: deque[_Target] = deque([_Target(self.seed_host, self.seed_device_type, None, 0)])

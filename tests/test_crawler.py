@@ -130,6 +130,18 @@ def test_device_seen_under_two_lldp_names_is_merged_into_one_node():
 
 
 # --------------------------------------------------------------- scope guard
+def test_seed_outside_allowed_subnets_raises_crawl_error():
+    devices = {"192.0.2.1": ("far", [])}
+    with pytest.raises(CrawlError, match="Seed device 192.0.2.1 is outside crawl.allowed_subnets"):
+        crawl(devices, seed="192.0.2.1")
+
+
+def test_seed_with_mapped_ip_outside_allowed_subnets_raises():
+    devices = {"192.0.2.1": ("far", [])}
+    with pytest.raises(CrawlError, match="Seed device far-seed is outside crawl.allowed_subnets"):
+        crawl(devices, seed="far-seed", name_to_ip={"far-seed": "192.0.2.1"})
+
+
 def test_nothing_outside_allowed_subnets_is_contacted():
     devices = {
         "10.0.0.1": ("a", [row("Gi1", "far", "Gi1", "192.0.2.50")]),
