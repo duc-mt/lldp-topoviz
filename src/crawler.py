@@ -19,6 +19,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+import socket
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
@@ -49,6 +50,10 @@ class CrawlConfig:
 
     The crawler sends your credentials to every device it decides to visit, so
     ``allowed_subnets`` is mandatory: nothing outside it is ever contacted.
+    Note: While ``allowed_subnets`` accepts IPv4 or IPv6 network objects, polling
+    and device discovery currently target IPv4 management addresses.
+    ``exclude_hostnames`` patterns are checked via ``re.search`` (unanchored substring match;
+    anchor with ``^`` and ``$`` if exact matches are desired).
     """
 
     allowed_subnets: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
@@ -178,6 +183,7 @@ class _Target:
     device_type: str
     node_id: str | None
     depth: int
+    remaining_hosts: tuple[str, ...] = ()
 
 
 @dataclass
@@ -234,20 +240,43 @@ class Crawler:
             CrawlError: If the seed device is outside allowed subnets or could not be crawled.
         """
         seed_ip = self.seed_host.strip() if is_ipv4(self.seed_host) else None
-        if not seed_ip:
+        candidate_seed_ips: list[str] = [seed_ip] if seed_ip else []
+        if not candidate_seed_ips:
             name_key = normalize_hostname(self.seed_host)
             override = self.config.device_overrides.get(name_key)
-            if override and override.get("host") and is_ipv4(override["host"]):
-                seed_ip = override["host"].strip()
-            elif name_key in self.config.name_to_ip and is_ipv4(self.config.name_to_ip[name_key]):
-                seed_ip = self.config.name_to_ip[name_key].strip()
+            if override and override.get("host"):
+                candidate_seed_ips = extract_ipv4(override["host"])
+            elif name_key in self.config.name_to_ip:
+                candidate_seed_ips = extract_ipv4(self.config.name_to_ip[name_key])
+            else:
+                try:
+                    resolved = socket.gethostbyname(self.seed_host.strip())
+                    candidate_seed_ips = [resolved]
+                except (socket.gaierror, OSError) as exc:
+                    raise CrawlError(
+                        f"Could not resolve seed host {self.seed_host!r} to verify scope: {exc}"
+                    ) from exc
 
-        if seed_ip and not self.config.in_scope(seed_ip):
+        in_scope_seed_ips = [ip for ip in candidate_seed_ips if self.config.in_scope(ip)]
+        if not in_scope_seed_ips:
             raise CrawlError(f"Seed device {self.seed_host} is outside crawl.allowed_subnets")
+
+        initial_host = in_scope_seed_ips[0]
+        initial_remaining = tuple(in_scope_seed_ips[1:])
 
         started = time.monotonic()
         result = CrawlResult(seed=self.seed_host)
-        queue: deque[_Target] = deque([_Target(self.seed_host, self.seed_device_type, None, 0)])
+        queue: deque[_Target] = deque(
+            [
+                _Target(
+                    initial_host,
+                    self.seed_device_type,
+                    None,
+                    0,
+                    remaining_hosts=initial_remaining,
+                )
+            ]
+        )
 
         while queue:
             target = queue.popleft()
@@ -255,17 +284,28 @@ class Crawler:
             if host_key in self._visited_hosts:
                 logger.debug("Already visited %s; skipping", target.host)
                 continue
-            if (
+
+            current_node = (
                 target.node_id
-                and self.engine.has_node(target.node_id)
-                and self.engine.status(target.node_id)
-                in (
-                    STATUS_CRAWLED,
-                    STATUS_FAILED,
-                )
-            ):
-                logger.debug("%s was already handled via another address", target.host)
-                continue
+                if (target.node_id and self.engine.has_node(target.node_id))
+                else None
+            )
+            if not current_node:
+                current_node = self.engine.find(ips=[target.host])
+
+            if current_node:
+                node_data = self.engine.graph.nodes.get(current_node, {})
+                known_ips = {ip.strip().lower() for ip in node_data.get("mgmt_ips", [])}
+                if self.engine.status(current_node) in (STATUS_CRAWLED, STATUS_FAILED) or bool(
+                    known_ips & self._visited_hosts
+                ):
+                    logger.debug(
+                        "%s (%s) was already handled; skipping",
+                        target.host,
+                        self.engine.label(current_node),
+                    )
+                    continue
+
             limit = self.config.max_devices
             if limit is not None and result.attempted >= limit:
                 result.limit_hit = True
@@ -295,14 +335,53 @@ class Crawler:
 
     # ------------------------------------------------------------ one device
     def _crawl_one(self, target: _Target, queue: deque[_Target], result: CrawlResult) -> None:
-        try:
-            raw = self.poller.poll(target.host, target.device_type)
-            if self.raw_sink:
-                self.raw_sink(raw)
-            parsed = self.parser.parse(raw)
-        except MapperError as exc:
-            self._record_failure(target, exc, result)
-            return
+        while True:
+            try:
+                raw = self.poller.poll(target.host, target.device_type)
+                if self.raw_sink:
+                    self.raw_sink(raw)
+                parsed = self.parser.parse(raw)
+                break
+            except MapperError as exc:
+                remaining = list(target.remaining_hosts)
+                next_host = None
+                while remaining:
+                    candidate = remaining.pop(0)
+                    cand_key = candidate.strip().lower()
+                    if cand_key not in self._visited_hosts:
+                        next_host = candidate
+                        break
+                if next_host is not None:
+                    limit = self.config.max_devices
+                    if limit is not None and result.attempted >= limit:
+                        result.limit_hit = True
+                        if target.node_id:
+                            self.engine.mark_skipped(
+                                target.node_id, f"max_devices limit ({limit}) reached"
+                            )
+                        return
+                    logger.warning(
+                        "Failed to crawl %s (%s): %s; trying alternative in-scope IP %s",
+                        target.host,
+                        target.device_type,
+                        exc,
+                        next_host,
+                    )
+                    target.host = next_host
+                    target.remaining_hosts = tuple(remaining)
+                    self._visited_hosts.add(next_host.strip().lower())
+                    result.attempted += 1
+                    logger.info(
+                        "[%d] Crawling fallback %s (%s) depth=%d queue=%d",
+                        result.attempted,
+                        target.host,
+                        target.device_type,
+                        target.depth,
+                        len(queue),
+                    )
+                    continue
+                self._record_failure(target, exc, result)
+                return
 
         host_ips = [target.host] if is_ipv4(target.host) else []
         node_hint = target.node_id
@@ -368,11 +447,14 @@ class Crawler:
     def _record_failure(self, target: _Target, exc: MapperError, result: CrawlResult) -> None:
         logger.error("Failed to crawl %s: %s", target.host, exc)
         node_id = target.node_id
-        if node_id is None:  # the seed: not known by any name yet
-            node_id = self.engine.resolve(
-                name="" if is_ipv4(target.host) else target.host,
-                ips=[target.host] if is_ipv4(target.host) else [],
-            )
+        if node_id is None or not self.engine.has_node(node_id):
+            found = self.engine.find(ips=[target.host]) if is_ipv4(target.host) else None
+            if found:
+                node_id = found
+            else:
+                name = "" if is_ipv4(self.seed_host) else self.seed_host
+                ips = [target.host] if is_ipv4(target.host) else []
+                node_id = self.engine.resolve(name=name, ips=ips)
         self.engine.mark_failed(
             node_id,
             str(exc),
@@ -420,14 +502,20 @@ class Crawler:
             if self.engine.mark_skipped(neighbor_id, decision.reason, decision.code):
                 logger.info("Not crawling %s: %s", self.engine.label(neighbor_id), decision.reason)
             return
-        host, device_type = decision
+        host, remaining_hosts, device_type = decision
         self.engine.mark_skipped(neighbor_id, "")
         self._queued_nodes.add(neighbor_id)
-        queue.append(_Target(host, device_type, neighbor_id, depth))
+        queue.append(
+            _Target(host, device_type, neighbor_id, depth, remaining_hosts=remaining_hosts)
+        )
         logger.debug("Queued %s (%s) at depth %d", host, device_type, depth)
 
-    def _decide(self, neighbor: LldpNeighbor, depth: int) -> tuple[str, str] | _Skip:
-        """Return ``(host, device_type)`` to crawl the neighbor, or the reason not to."""
+    def _decide(
+        self, neighbor: LldpNeighbor, depth: int
+    ) -> tuple[str, tuple[str, ...], str] | _Skip:
+        """Return ``(host, remaining_hosts, device_type)`` to crawl the neighbor, or the reason
+        not to.
+        """
         cfg = self.config
         name_key = normalize_hostname(neighbor.neighbor_name)
         name = neighbor.neighbor_name or neighbor.chassis_id
@@ -462,12 +550,13 @@ class Crawler:
             return _Skip(
                 "no_ip", "no management IP advertised (add it under crawl.name_to_ip to crawl it)"
             )
-        in_scope = [ip for ip in candidates if cfg.in_scope(ip)]
+        in_scope = [ip for ip in dict.fromkeys(candidates) if cfg.in_scope(ip)]
         if not in_scope:
             return _Skip(
                 "out_of_scope", f"management IP {candidates[0]} is outside crawl.allowed_subnets"
             )
         host = in_scope[0]
+        remaining_hosts = tuple(in_scope[1:])
 
         if cfg.max_depth is not None and depth > cfg.max_depth:
             return _Skip("max_depth", f"crawl.max_depth ({cfg.max_depth}) reached")
@@ -486,4 +575,4 @@ class Crawler:
                 f"no LLDP profile for device_type '{device_type}' "
                 "(add one under custom_vendors, or set crawl.device_overrides)",
             )
-        return host, device_type
+        return host, remaining_hosts, device_type

@@ -1,3 +1,5 @@
+import socket
+
 import pytest
 
 from src.crawler import CrawlConfig, Crawler, CrawlError
@@ -140,6 +142,33 @@ def test_seed_with_mapped_ip_outside_allowed_subnets_raises():
     devices = {"192.0.2.1": ("far", [])}
     with pytest.raises(CrawlError, match="Seed device far-seed is outside crawl.allowed_subnets"):
         crawl(devices, seed="far-seed", name_to_ip={"far-seed": "192.0.2.1"})
+
+
+def test_seed_hostname_resolves_outside_allowed_subnets_raises(monkeypatch):
+    devices = {"192.0.2.1": ("far", [])}
+    monkeypatch.setattr(socket, "gethostbyname", lambda host: "192.0.2.1")
+    with pytest.raises(CrawlError, match="Seed device far-host is outside crawl.allowed_subnets"):
+        crawl(devices, seed="far-host")
+
+
+def test_seed_hostname_unresolvable_raises(monkeypatch):
+    devices = {"10.0.0.1": ("core1", [])}
+
+    def mock_gethostbyname(host):
+        raise socket.gaierror(-2, "Name or service not known")
+
+    monkeypatch.setattr(socket, "gethostbyname", mock_gethostbyname)
+    with pytest.raises(CrawlError, match="Could not resolve seed host 'bad-host' to verify scope"):
+        crawl(devices, seed="bad-host")
+
+
+def test_seed_hostname_resolves_in_scope_succeeds(monkeypatch):
+    devices = {"10.0.0.1": ("core1", [])}
+    monkeypatch.setattr(socket, "gethostbyname", lambda host: "10.0.0.1")
+    result, engine, poller = crawl(devices, seed="core1.local")
+    assert result.crawled == 1
+    assert poller.calls == ["10.0.0.1"]
+    assert statuses(engine) == {"core1": STATUS_CRAWLED}
 
 
 def test_nothing_outside_allowed_subnets_is_contacted():
@@ -534,3 +563,45 @@ def test_a_cdp_only_phone_is_classified_by_its_platform():
     _, engine = crawl_multi(devices)
     assert engine.graph.nodes["sep0011"]["skip_code"] == "capabilities"
     assert engine.graph.nodes["sep0011"]["capabilities"] == ["station", "telephone"]
+
+
+# -------------------------------------------------------- multi-IP fallback
+def test_multi_ip_neighbor_falls_back_to_second_ip_on_failure():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2 10.0.0.22")]),
+        "10.0.0.2": PollerError("Connection timed out talking to 10.0.0.2"),
+        "10.0.0.22": ("b", []),
+    }
+    result, engine, poller = crawl(devices)
+    assert poller.calls == ["10.0.0.1", "10.0.0.2", "10.0.0.22"]
+    assert statuses(engine) == {"a": STATUS_CRAWLED, "b": STATUS_CRAWLED}
+    assert result.crawled == 2
+    assert not result.partial
+    assert not result.failures
+
+
+def test_multi_ip_neighbor_marks_failed_if_all_ips_fail():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2 10.0.0.22")]),
+        "10.0.0.2": PollerError("Connection timed out talking to 10.0.0.2"),
+        "10.0.0.22": PollerError("Connection timed out talking to 10.0.0.22"),
+    }
+    result, engine, poller = crawl(devices)
+    assert poller.calls == ["10.0.0.1", "10.0.0.2", "10.0.0.22"]
+    assert statuses(engine) == {"a": STATUS_CRAWLED, "b": STATUS_FAILED}
+    assert result.crawled == 1
+    assert result.partial
+    assert len(result.failures) == 1
+    assert result.failures[0][0] == "10.0.0.22"
+
+
+def test_multi_ip_neighbor_fallback_respects_max_devices():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2 10.0.0.22")]),
+        "10.0.0.2": PollerError("Timeout"),
+        "10.0.0.22": ("b", []),
+    }
+    result, engine, poller = crawl(devices, max_devices=2)
+    assert poller.calls == ["10.0.0.1", "10.0.0.2"]
+    assert result.limit_hit
+    assert "max_devices limit (2)" in reason(engine, "b")
