@@ -39,7 +39,25 @@ Structure, CLI, logging, error handling and config management deliberately mirro
   with rules and per-device overrides in `settings.yaml`.
 - Offline replay (`--replay`) and capture (`--save-raw`) of the raw CLI output, for tests and demos.
 
-## Quick start
+## Standalone Executable (Zero-Dependency & Air-Gapped)
+
+No Python, pip, or virtual environment is required on the target machine:
+
+1. Download the standalone executable from [GitHub Releases](https://github.com/duc-mt/lldp-topoviz/releases) under **Latest Build**:
+   - `lldp-topoviz-windows-amd64.exe` (Windows 64-bit)
+   - `lldp-topoviz-linux-amd64` (Linux 64-bit)
+2. Place the single binary in an empty directory on the target machine.
+3. Generate template configuration:
+   ```cmd
+   lldp-topoviz-windows-amd64.exe --init   :: (or ./lldp-topoviz-linux-amd64 --init)
+   ```
+4. Edit the generated `settings.yaml` with your seed router IP, credentials, and allowed subnets.
+5. Run the crawl:
+   ```cmd
+   lldp-topoviz-windows-amd64.exe          :: (or ./lldp-topoviz-linux-amd64)
+   ```
+
+## Quick start (Source / Developer)
 
 The easiest way to run is via the universal launcher script (`./run` on Linux/macOS or `.\scripts\run.bat` on native Windows CMD), which automatically initializes `.venv`, installs locked dependencies, and creates `config/settings.yaml` from template on first run:
 

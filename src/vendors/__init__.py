@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -79,7 +80,13 @@ class UnsupportedVendorError(MapperError):
     kind = "unsupported"  # failure class shown in the diagram
 
 
-_BUILTIN_TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+def _get_builtin_templates_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "templates"
+    return Path(__file__).resolve().parent.parent.parent / "templates"
+
+
+_BUILTIN_TEMPLATES_DIR = _get_builtin_templates_dir()
 
 
 def _resolve_template(template: str, label: str, search_dirs: Sequence[Path]) -> Path:
