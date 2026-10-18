@@ -99,6 +99,11 @@ class CrawlConfig:
                 "crawl.allowed_subnets is required (or pass --allow CIDR): the crawler only "
                 "logs in to devices inside these networks"
             )
+        if any(isinstance(net, ipaddress.IPv6Network) for net in subnets):
+            logger.warning(
+                "crawl.allowed_subnets contains IPv6 network(s); note that crawler discovery "
+                "currently targets IPv4 management addresses."
+            )
 
         def limit(value: Any, name: str, minimum: int) -> int | None:
             return None if value is None else as_int(value, name, minimum)
@@ -228,6 +233,16 @@ class Crawler:
         self.raw_sink = raw_sink
         self._visited_hosts: set[str] = set()
         self._queued_nodes: set[str] = set()
+        self._dns_cache: dict[str, str] = {}
+
+    def _resolve_host(self, host: str) -> str:
+        """Resolve a hostname to IPv4 address, caching results."""
+        h = host.strip()
+        if h in self._dns_cache:
+            return self._dns_cache[h]
+        resolved = socket.gethostbyname(h)
+        self._dns_cache[h] = resolved
+        return resolved
 
     # ------------------------------------------------------------------ run
     def run(self) -> CrawlResult:
@@ -250,7 +265,7 @@ class Crawler:
                 candidate_seed_ips = extract_ipv4(self.config.name_to_ip[name_key])
             else:
                 try:
-                    resolved = socket.gethostbyname(self.seed_host.strip())
+                    resolved = self._resolve_host(self.seed_host)
                     candidate_seed_ips = [resolved]
                 except (socket.gaierror, OSError) as exc:
                     raise CrawlError(

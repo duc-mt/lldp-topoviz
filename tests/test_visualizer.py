@@ -165,6 +165,8 @@ def test_physics_layout_has_no_levels_or_tier_rows(demo_engine, tmp_path):
     nodes, _ = vis_data(page)
     assert all("level" not in n for n in nodes) and detail(page)["tiers"] == []
     assert "barnesHut" in page
+    assert '"iterations": 200' in page
+    assert "stabilizationIterationsDone" in page
 
 
 def test_custom_tier_rules_are_applied(demo_engine, tmp_path):

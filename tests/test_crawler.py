@@ -605,3 +605,38 @@ def test_multi_ip_neighbor_fallback_respects_max_devices():
     assert poller.calls == ["10.0.0.1", "10.0.0.2"]
     assert result.limit_hit
     assert "max_devices limit (2)" in reason(engine, "b")
+
+
+def test_dns_resolution_is_cached(monkeypatch):
+    calls = []
+
+    def mock_gethostbyname(host):
+        calls.append(host)
+        return "10.0.0.1"
+
+    monkeypatch.setattr(socket, "gethostbyname", mock_gethostbyname)
+    poller = FakePoller({"10.0.0.1": ("core1", [])})
+    engine = GraphEngine(data_dir="/tmp/lldp-test-unused")
+    crawler = Crawler(poller, LldpParser(), engine, make_config(), "core1.local", "cisco_ios")
+
+    # First resolution uses socket.gethostbyname and populates cache
+    assert crawler._resolve_host("core1.local") == "10.0.0.1"
+    assert calls == ["core1.local"]
+
+    # Second resolution uses cache without calling socket.gethostbyname again
+    assert crawler._resolve_host("core1.local") == "10.0.0.1"
+    assert len(calls) == 1
+
+    # Running crawl also uses the cache
+    result = crawler.run()
+    assert result.crawled == 1
+    assert len(calls) == 1
+
+
+def test_ipv6_allowed_subnet_logs_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        cfg = CrawlConfig.from_settings({"allowed_subnets": ["2001:db8::/32", "10.0.0.0/8"]})
+    assert any("contains IPv6 network(s)" in r.message for r in caplog.records)
+    assert len(cfg.allowed_subnets) == 2

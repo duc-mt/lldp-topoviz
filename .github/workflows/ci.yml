@@ -31,7 +31,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest ruff
+
+      - name: Lint with Ruff
+        run: ruff check .
 
       - name: Run test suite
         run: pytest tests/ -v

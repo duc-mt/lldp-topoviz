@@ -31,6 +31,7 @@ from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
 from src.vendors import load_custom_vendors, supported_device_types
 from src.visualizer import TopologyVisualizer, VisualOptions
 
+
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -38,9 +39,19 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR = _get_base_dir()
-DEFAULT_CONFIG = Path("config/settings.yaml") if Path("config/settings.yaml").exists() else (Path("settings.yaml") if Path("settings.yaml").exists() else BASE_DIR / "config" / "settings.yaml")
+if Path("config/settings.yaml").exists():
+    DEFAULT_CONFIG = Path("config/settings.yaml")
+elif Path("settings.yaml").exists():
+    DEFAULT_CONFIG = Path("settings.yaml")
+else:
+    DEFAULT_CONFIG = BASE_DIR / "config" / "settings.yaml"
+
 DATA_DIR = Path("data") if Path("data").exists() else BASE_DIR / "data"
-TEMPLATE_DIR = Path(sys._MEIPASS) / "templates" if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") else BASE_DIR / "templates"
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    TEMPLATE_DIR = Path(sys._MEIPASS) / "templates"
+else:
+    TEMPLATE_DIR = BASE_DIR / "templates"
+
 OUTPUT_HTML = Path("output/topology.html")
 
 EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_PARTIAL = 0, 1, 2, 3
@@ -220,19 +231,26 @@ def run(args: argparse.Namespace) -> int:
         if target.exists():
             print("[.] settings.yaml already exists, skipping")
             return EXIT_OK
-        sample_path = (Path(sys._MEIPASS) / "config" / "settings.yaml") if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") else BASE_DIR / "config" / "settings.yaml"
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            sample_path = Path(sys._MEIPASS) / "config" / "settings.yaml"
+        else:
+            sample_path = BASE_DIR / "config" / "settings.yaml"
+
         if sample_path.exists():
             target.write_text(sample_path.read_text(encoding="utf-8"), encoding="utf-8")
             print("[+] Created sample settings.yaml")
         else:
             print("[!] Could not locate bundled sample settings.yaml")
             return EXIT_ERROR
-        print("\nSample configuration created! Edit settings.yaml with your seed IP, device type, and credentials.")
+        print(
+            "\nSample configuration created! "
+            "Edit settings.yaml with your seed IP, device type, and credentials."
+        )
         return EXIT_OK
 
     try:
         settings = load_settings(args.config, required=not args.replay)
-    except Exception as exc:
+    except Exception:
         if not args.config.exists():
             print(f"Error: configuration file '{args.config}' not found.")
             print("\nTip: Run with '--init' to create a sample settings.yaml template.\n")

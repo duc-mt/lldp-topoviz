@@ -643,7 +643,7 @@ class TopologyVisualizer:
                     "damping": 0.12,
                     "avoidOverlap": 0.4,
                 },
-                "stabilization": {"iterations": 300},
+                "stabilization": {"enabled": True, "iterations": 200, "updateInterval": 25},
             }
         return options
 

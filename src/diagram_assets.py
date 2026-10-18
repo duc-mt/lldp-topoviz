@@ -261,6 +261,9 @@ PAGE_JS = r"""
     else if (p.edges && p.edges.length) { showLink(p.edges[0]); }
     else { hide(); }
   });
+  network.once('stabilizationIterationsDone', function () {
+    network.setOptions({ physics: false });
+  });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { hide(); } });
 
   // -------------------------------------------------- problems list in the legend
