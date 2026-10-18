@@ -331,9 +331,14 @@ A capture directory holds, per device, `<host>.txt` (LLDP), `<host>.cdp.txt` (an
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                 # 425 tests, no devices or network needed
+pytest                 # no devices or network needed
 ruff check . && ruff format --check .
 ```
+
+Node.js (>= 16) is recommended for running the full suite. The failure simulation in the HTML viewer is plain
+JavaScript, and `tests/test_simulation.py` runs it under `node` against the same data the page embeds. Without
+`node` on your `PATH` those tests are skipped (`pytest -rs` lists them) and everything else still runs. CI installs
+Node 20, so they always run there.
 
 `requirements.lock` records the exact versions the tests were run with (Netmiko 4.8.0, ntc-templates 9.3.0,
 NetworkX 3.7, Pyvis 0.3.2).

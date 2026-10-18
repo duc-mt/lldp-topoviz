@@ -462,3 +462,20 @@ def test_replay_ignores_protocols_that_were_not_asked_for(demo_dir):
 def test_replay_skips_protocols_the_platform_does_not_have(demo_dir):
     raw = FilePoller(demo_dir).poll("10.0.2.1", "arista_eos")  # EOS has no CDP profile
     assert "cdp" not in raw.extras
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("core1", "core1"),
+        ("  core1  ", "core1"),  # stray whitespace is stripped
+        (None, "10.0.0.1"),  # no prompt: fall back to the address that was polled
+        ("", "10.0.0.1"),
+        ("   ", "10.0.0.1"),
+    ],
+)
+def test_the_hostname_survives_a_missing_or_blank_prompt(prompt, expected):
+    conn = FakeConn([{"NEIGHBOR_NAME": "sw2"}])
+    conn.base_prompt = prompt
+    raw, _ = poll_with(conn)
+    assert raw.hostname == expected

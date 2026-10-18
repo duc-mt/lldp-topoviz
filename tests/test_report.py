@@ -1,3 +1,5 @@
+import pytest
+
 from src.models import BLIND_SPOT_REASONS, BlindSpot
 from src.report import blind_spots_payload, format_blind_spots
 
@@ -105,3 +107,54 @@ def test_the_payload_is_json_friendly_and_complete():
             "parent_id": "sw-core-1",
         }
     ]
+
+
+# ------------------------------------------------------------- long lists are cut short
+def many(count):
+    return [make(hostname=f"SW-{i:02d}", parent_port=f"Gi1/0/{i}") for i in range(1, count + 1)]
+
+
+def entries(text):
+    return [line for line in text.splitlines() if "Hostname:" in line]
+
+
+def test_more_blind_spots_than_the_limit_are_cut_with_a_summary_line():
+    text = format_blind_spots(many(20), crawled=3)
+    assert len(entries(text)) == 15  # the default limit
+    assert "  1. Hostname: 'SW-01'" in text and "  15. Hostname: 'SW-15'" in text
+    assert "SW-16" not in text and "SW-20" not in text
+    assert text.splitlines()[-1] == (
+        "  ... and 5 more blind spot(s) (see HTML viewer or snapshot for full list)."
+    )
+    assert "- 20 blind spot(s) detected" in text  # the headline counts all of them
+
+
+def test_a_list_at_the_limit_is_printed_whole_without_a_summary():
+    text = format_blind_spots(many(15), crawled=3)
+    assert len(entries(text)) == 15 and "more blind spot(s)" not in text
+    assert "SW-15" in text
+
+
+def test_one_over_the_limit_says_one_more():
+    text = format_blind_spots(many(16), crawled=3)
+    assert len(entries(text)) == 15
+    assert text.splitlines()[-1].startswith("  ... and 1 more blind spot(s) (see HTML viewer")
+
+
+def test_the_limit_can_be_set():
+    text = format_blind_spots(many(5), crawled=3, limit=2)
+    assert [e.strip().split(" Hostname:")[0] for e in entries(text)] == ["1.", "2."]
+    assert "  ... and 3 more blind spot(s)" in text
+    assert "SW-03" not in text
+
+
+@pytest.mark.parametrize("limit", [0, -1, -7])
+def test_a_limit_below_one_lists_none_and_never_slices_from_the_end(limit):
+    text = format_blind_spots(many(4), crawled=3, limit=limit)
+    assert entries(text) == []
+    assert text.splitlines()[-1].startswith("  ... and 4 more blind spot(s)")
+
+
+def test_cutting_the_console_list_does_not_cut_the_export():
+    spots = many(20)
+    assert len(blind_spots_payload(spots)) == 20  # the viewer and the snapshot keep everything

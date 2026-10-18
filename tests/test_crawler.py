@@ -144,9 +144,35 @@ def test_seed_with_mapped_ip_outside_allowed_subnets_raises():
         crawl(devices, seed="far-seed", name_to_ip={"far-seed": "192.0.2.1"})
 
 
+def addrinfo(*addresses):
+    """What ``socket.getaddrinfo`` returns: one tuple per address, IPv4 or IPv6."""
+    return [
+        (
+            socket.AF_INET6 if ":" in ip else socket.AF_INET,
+            socket.SOCK_STREAM,
+            6,
+            "",
+            (ip, 0, 0, 0) if ":" in ip else (ip, 0),
+        )
+        for ip in addresses
+    ]
+
+
+def fake_getaddrinfo(monkeypatch, *addresses):
+    """Make every DNS lookup answer ``addresses``; returns the list of recorded calls."""
+    calls = []
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        calls.append((host, port, args, kwargs))
+        return addrinfo(*addresses)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return calls
+
+
 def test_seed_hostname_resolves_outside_allowed_subnets_raises(monkeypatch):
     devices = {"192.0.2.1": ("far", [])}
-    monkeypatch.setattr(socket, "gethostbyname", lambda host: "192.0.2.1")
+    fake_getaddrinfo(monkeypatch, "192.0.2.1")
     with pytest.raises(CrawlError, match="Seed device far-host is outside crawl.allowed_subnets"):
         crawl(devices, seed="far-host")
 
@@ -154,21 +180,99 @@ def test_seed_hostname_resolves_outside_allowed_subnets_raises(monkeypatch):
 def test_seed_hostname_unresolvable_raises(monkeypatch):
     devices = {"10.0.0.1": ("core1", [])}
 
-    def mock_gethostbyname(host):
+    def mock_getaddrinfo(host, port, *args, **kwargs):
         raise socket.gaierror(-2, "Name or service not known")
 
-    monkeypatch.setattr(socket, "gethostbyname", mock_gethostbyname)
+    monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
     with pytest.raises(CrawlError, match="Could not resolve seed host 'bad-host' to verify scope"):
         crawl(devices, seed="bad-host")
 
 
 def test_seed_hostname_resolves_in_scope_succeeds(monkeypatch):
     devices = {"10.0.0.1": ("core1", [])}
-    monkeypatch.setattr(socket, "gethostbyname", lambda host: "10.0.0.1")
+    fake_getaddrinfo(monkeypatch, "10.0.0.1")
     result, engine, poller = crawl(devices, seed="core1.local")
     assert result.crawled == 1
     assert poller.calls == ["10.0.0.1"]
     assert statuses(engine) == {"core1": STATUS_CRAWLED}
+
+
+def test_a_dual_stack_seed_name_is_crawled_on_its_ipv4_address(monkeypatch):
+    devices = {"10.0.0.1": ("core1", [])}
+    fake_getaddrinfo(monkeypatch, "2001:db8::1", "10.0.0.1")  # the IPv6 answer comes first
+    result, _, poller = crawl(devices, seed="core1.local")
+    assert result.crawled == 1 and poller.calls == ["10.0.0.1"]
+
+
+def test_a_seed_name_with_only_ipv6_addresses_is_unresolvable(monkeypatch):
+    fake_getaddrinfo(monkeypatch, "2001:db8::1")
+    with pytest.raises(CrawlError, match="Could not resolve seed host 'v6-only' to verify scope"):
+        crawl({"10.0.0.1": ("core1", [])}, seed="v6-only")
+
+
+# ------------------------------------------------------------------ _resolve_host
+def make_crawler():
+    return Crawler(
+        FakePoller({}),
+        LldpParser(),
+        GraphEngine(data_dir="/tmp/lldp-test-unused"),
+        make_config(),
+        "10.0.0.1",
+        "cisco_ios",
+    )
+
+
+def test_resolve_host_asks_getaddrinfo_for_ipv4_only(monkeypatch):
+    calls = fake_getaddrinfo(monkeypatch, "10.0.0.7")
+    assert make_crawler()._resolve_host("core1.lab") == "10.0.0.7"
+    assert calls == [("core1.lab", None, (), {"family": socket.AF_INET})]
+
+
+def test_resolve_host_returns_the_first_ipv4_address_and_skips_ipv6(monkeypatch):
+    fake_getaddrinfo(monkeypatch, "2001:db8::5", "fe80::1", "10.0.0.7", "10.0.0.8")
+    assert make_crawler()._resolve_host("core1.lab") == "10.0.0.7"
+
+
+def test_resolve_host_filters_on_the_address_family_even_if_the_resolver_ignores_it(monkeypatch):
+    # a resolver that returns IPv6 entries despite family=AF_INET must still not leak one
+    fake_getaddrinfo(monkeypatch, "2001:db8::5")
+    with pytest.raises(socket.gaierror):
+        make_crawler()._resolve_host("v6-only.lab")
+
+
+def test_resolve_host_raises_gaierror_when_there_is_no_ipv4_address(monkeypatch):
+    fake_getaddrinfo(monkeypatch)  # an empty answer
+    with pytest.raises(socket.gaierror, match="no IPv4 address for 'nothing.lab'"):
+        make_crawler()._resolve_host("nothing.lab")
+
+
+def test_resolve_host_passes_resolver_errors_through(monkeypatch):
+    def refuse(host, port, *args, **kwargs):
+        raise socket.gaierror(-2, "Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    with pytest.raises(socket.gaierror, match="Name or service not known"):
+        make_crawler()._resolve_host("bad.lab")
+
+
+def test_resolve_host_remembers_answers_for_the_rest_of_the_crawl(monkeypatch):
+    calls = fake_getaddrinfo(monkeypatch, "10.0.0.7")
+    crawler = make_crawler()
+    assert crawler._resolve_host("core1.lab") == "10.0.0.7"
+    assert crawler._resolve_host("  core1.lab ") == "10.0.0.7"  # same name, stray spaces
+    assert len(calls) == 1
+    assert crawler._dns_cache == {"core1.lab": "10.0.0.7"}
+    crawler._resolve_host("core2.lab")
+    assert len(calls) == 2  # another name is another lookup
+
+
+def test_resolve_host_does_not_remember_a_failure(monkeypatch):
+    crawler = make_crawler()
+    fake_getaddrinfo(monkeypatch)
+    with pytest.raises(socket.gaierror):
+        crawler._resolve_host("flaky.lab")
+    fake_getaddrinfo(monkeypatch, "10.0.0.9")  # DNS recovers
+    assert crawler._resolve_host("flaky.lab") == "10.0.0.9"
 
 
 def test_nothing_outside_allowed_subnets_is_contacted():
@@ -876,22 +980,16 @@ def test_a_leaf_verdict_from_one_switch_is_not_overturned_by_another_switchs_rep
 
 
 def test_dns_resolution_is_cached(monkeypatch):
-    calls = []
-
-    def mock_gethostbyname(host):
-        calls.append(host)
-        return "10.0.0.1"
-
-    monkeypatch.setattr(socket, "gethostbyname", mock_gethostbyname)
+    calls = fake_getaddrinfo(monkeypatch, "10.0.0.1")
     poller = FakePoller({"10.0.0.1": ("core1", [])})
     engine = GraphEngine(data_dir="/tmp/lldp-test-unused")
     crawler = Crawler(poller, LldpParser(), engine, make_config(), "core1.local", "cisco_ios")
 
-    # First resolution uses socket.gethostbyname and populates cache
+    # First resolution uses socket.getaddrinfo and populates cache
     assert crawler._resolve_host("core1.local") == "10.0.0.1"
-    assert calls == ["core1.local"]
+    assert len(calls) == 1
 
-    # Second resolution uses cache without calling socket.gethostbyname again
+    # Second resolution uses cache without calling socket.getaddrinfo again
     assert crawler._resolve_host("core1.local") == "10.0.0.1"
     assert len(calls) == 1
 

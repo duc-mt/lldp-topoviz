@@ -98,12 +98,15 @@ def _fix(spot: BlindSpot) -> str:
     return _FIX.get(spot.reason, "See the detail above.")
 
 
-def format_blind_spots(blind_spots: Sequence[BlindSpot], crawled: int) -> str:
+def format_blind_spots(blind_spots: Sequence[BlindSpot], crawled: int, limit: int = 15) -> str:
     """The blind-spot section of the console report ('' when there are none).
 
     Args:
         blind_spots: What ``CrawlResult.blind_spots`` holds.
         crawled: How many devices were crawled successfully (for the coverage line).
+        limit: How many blind spots to list in full. A bigger list is cut to the first
+            ``limit`` followed by one summary line; the counts above it always cover all of
+            them, and the HTML viewer and the snapshot carry the full list. ``0`` lists none.
     """
     if not blind_spots:
         return ""
@@ -113,7 +116,8 @@ def format_blind_spots(blind_spots: Sequence[BlindSpot], crawled: int) -> str:
         f"- {crawled} device(s) successfully crawled.",
         f"- {count} blind spot(s) detected (downstream branches missing):",
     ]
-    for number, spot in enumerate(blind_spots, start=1):
+    shown = blind_spots[: max(limit, 0)]
+    for number, spot in enumerate(shown, start=1):
         name = _clean(spot.hostname) or _clean(spot.chassis_id) or _clean(spot.management_ip)
         chassis = f" (Chassis: {_clean(spot.chassis_id)})" if _clean(spot.chassis_id) else ""
         lines.append(f"  {number}. Hostname: '{name}'{chassis}")
@@ -134,6 +138,11 @@ def format_blind_spots(blind_spots: Sequence[BlindSpot], crawled: int) -> str:
             f"     -> Impact: anything behind '{name}' is not mapped; the diagram ends at {parent}."
         )
         lines.append(f"     -> Fix: {_fix(spot)}")
+    if len(blind_spots) > len(shown):
+        lines.append(
+            f"  ... and {len(blind_spots) - len(shown)} more blind spot(s) "
+            "(see HTML viewer or snapshot for full list)."
+        )
     return "\n".join(lines)
 
 

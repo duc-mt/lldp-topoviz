@@ -212,7 +212,7 @@ class DevicePoller(BasePoller):
             with ConnectHandler(**self._connection_params(host, device_type)) as conn:
                 if self.connection.secret and not conn.check_enable_mode():
                     conn.enable()
-                hostname = conn.base_prompt
+                hostname = (conn.base_prompt or "").strip() or host
                 collected: dict[str, ProtocolData] = {}
                 errors: list[PollerError] = []
                 for name, proto in protocols.items():

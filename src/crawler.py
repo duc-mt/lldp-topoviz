@@ -272,14 +272,27 @@ class Crawler:
         self._queued_nodes: set[str] = set()
         self._dns_cache: dict[str, str] = {}
 
+    # --------------------------------------------------------------- DNS
     def _resolve_host(self, host: str) -> str:
-        """Resolve a hostname to IPv4 address, caching results."""
-        h = host.strip()
-        if h in self._dns_cache:
-            return self._dns_cache[h]
-        resolved = socket.gethostbyname(h)
-        self._dns_cache[h] = resolved
-        return resolved
+        """Resolve a DNS name to one IPv4 address, remembered for the rest of this crawl.
+
+        ``getaddrinfo`` restricted to ``AF_INET`` instead of ``gethostbyname``: the result is
+        filtered to IPv4 socket addresses explicitly, so a dual-stack name can never hand back
+        an IPv6 literal (the crawler, the scope check and SSH all work on IPv4 only).
+
+        Raises:
+            socket.gaierror: If the name has no IPv4 address (or does not resolve at all).
+        """
+        host = host.strip()
+        if host in self._dns_cache:
+            return self._dns_cache[host]
+        for family, _type, _proto, _canonname, sockaddr in socket.getaddrinfo(
+            host, None, family=socket.AF_INET
+        ):
+            if family == socket.AF_INET:
+                self._dns_cache[host] = str(sockaddr[0])
+                return self._dns_cache[host]
+        raise socket.gaierror(getattr(socket, "EAI_NONAME", -2), f"no IPv4 address for {host!r}")
 
     # ------------------------------------------------------------------ run
     def run(self) -> CrawlResult:
