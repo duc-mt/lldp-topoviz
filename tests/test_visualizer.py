@@ -19,7 +19,7 @@ from src.visualizer import (
     VisualOptions,
 )
 
-from .conftest import make_config
+from .conftest import make_campus, make_config
 
 
 @pytest.fixture
@@ -647,3 +647,170 @@ def test_link_records_carry_their_label_so_the_page_can_fade_it_with_the_link(
     }
     assert links[frozenset(("core1", "dist1"))]["label"] == "LACP ×2"
     assert links[frozenset(("core1", "core2"))]["label"] == ""
+
+
+# ------------------------------------------------ blind spots, simulation data, grouping
+BLIND_SPOT = {
+    "hostname": "SW-ACC-BLDG-B",
+    "chassis_id": "00:1a:2b:3c:4d:5e",
+    "management_ip": "10.10.99.12",
+    "discovered_via": "core1",
+    "parent_port": "Gi1/0/24",
+    "reason": "OUT_OF_SCOPE",
+    "detail": "outside",
+    "node_id": "sw-acc-bldg-b",
+    "parent_id": "core1",
+}
+
+
+def test_blind_spots_are_exported_in_the_json_embedded_in_the_page(tmp_path):
+    engine = make_campus(tmp_path)
+    page = render(engine, tmp_path, {"seed": "10.0.0.1", "blind_spots": [BLIND_SPOT]})
+    assert detail(page)["blind_spots"] == [BLIND_SPOT]
+    assert "lldp-blindspots" in page
+    assert detail(render(engine, tmp_path / "again", {"seed": "x"}))["blind_spots"] == []
+
+
+def test_blind_spot_text_from_the_network_loses_its_control_characters(tmp_path):
+    spot = {**BLIND_SPOT, "hostname": "bad\x1b[2Jname", "detail": "line\x07"}
+    page = render(make_campus(tmp_path), tmp_path, {"blind_spots": [spot]})
+    exported = detail(page)["blind_spots"][0]
+    assert exported["hostname"] == "bad[2Jname" and exported["detail"] == "line"
+
+
+def test_every_device_carries_what_the_simulation_needs(tmp_path):
+    nodes = detail(render(make_campus(tmp_path), tmp_path))["nodes"]
+
+    def facts(node):
+        n = nodes[node]
+        return n["rank"], n["core"], n["leaf"], n["spof_ok"]
+
+    assert facts("core1") == (1, True, "", True)
+    assert facts("dist1") == (2, False, "", True)
+    assert facts("acc2") == (3, False, "", True)
+    assert facts("sw-acc-bldg-b") == (3, False, "", True)
+    assert facts("sep000") == (4, False, "phone", False)
+    assert facts("ap0") == (4, False, "ap", False)
+    assert facts("srv1") == (4, False, "server", True)  # a single-homed host is a SPOF too
+
+
+def test_the_force_directed_layout_still_gets_tier_data_for_the_simulation(tmp_path):
+    page = render(make_campus(tmp_path), tmp_path, layout="physics")
+    data = detail(page)
+    assert data["tiers"] == []  # nothing drawn as rows ...
+    assert data["nodes"]["core1"]["core"] is True  # ... but the Core is still known
+    assert data["nodes"]["acc1"]["rank"] == 3
+
+
+def test_leaf_class_falls_back_to_the_icon_type_when_the_crawler_recorded_none(tmp_path):
+    engine = GraphEngine(data_dir=tmp_path)
+    a = engine.resolve(name="a")
+    phone = engine.resolve(name="deskphone", capabilities=["telephone"])
+    engine.add_link(a, "Gi1", phone, "p1")
+    engine.set_seed(a)
+    assert detail(render(engine, tmp_path))["nodes"]["deskphone"]["leaf"] == "phone"
+
+
+def test_leaf_endpoints_fold_into_one_badge_per_switch_and_class(tmp_path):
+    groups = detail(render(make_campus(tmp_path), tmp_path))["groups"]
+    by_id = {g["id"]: g for g in groups}
+    assert sorted(by_id) == ["grp:acc1|phone", "grp:acc2|ap"]
+    phones = by_id["grp:acc1|phone"]
+    assert phones["sw"] == "acc1" and phones["leaf"] == "phone"
+    assert phones["members"] == [f"sep00{i}" for i in range(5)]
+    assert phones["text"] == "\U0001f4de 5 Phones"
+    assert by_id["grp:acc2|ap"]["text"] == "\U0001f4f6 3 Access Points"
+    assert "Click to expand or collapse" in phones["title"]
+
+
+def test_dual_homed_and_lone_hosts_are_never_hidden_in_a_badge(tmp_path):
+    groups = detail(render(make_campus(tmp_path), tmp_path))["groups"]
+    grouped = {m for g in groups for m in g["members"]}
+    assert "srv2" not in grouped  # two uplinks: hiding it would hide its redundancy
+    assert "srv1" not in grouped  # one host on its switch is below the group size
+
+
+def test_a_switch_needs_three_leaves_of_one_class_for_a_badge(tmp_path):
+    engine = GraphEngine(data_dir=tmp_path)
+    sw = engine.resolve(name="sw")
+    engine.set_seed(sw)
+    for i in range(2):
+        phone = engine.resolve(name=f"p{i}", capabilities=["telephone"])
+        engine.add_link(sw, f"Gi{i}", phone, "p")
+    for i in range(2):
+        ap = engine.resolve(name=f"ap{i}", capabilities=["wlan"])
+        engine.add_link(sw, f"Gi{i + 5}", ap, "e0")
+    assert detail(render(engine, tmp_path))["groups"] == []  # 2 + 2, never 3 of a kind
+
+
+def test_a_leaf_whose_link_has_a_finding_stays_visible(tmp_path):
+    engine = GraphEngine(data_dir=tmp_path)
+    sw = engine.resolve(name="sw")
+    engine.set_seed(sw)
+    for i in range(3):
+        phone = engine.resolve(name=f"p{i}", capabilities=["telephone"])
+        engine.add_link(sw, f"Gi{i}", phone, "p")
+    for _u, v, data in engine.graph.edges(data=True):
+        if v == "p1":
+            data["warnings"] = [{"kind": "x", "text": "half duplex", "severity": "degraded"}]
+    groups = detail(render(engine, tmp_path))["groups"]
+    assert groups == []  # p1 is not folded away, leaving two: below the group size
+
+
+def test_group_badges_are_drawn_hidden_in_front_of_their_first_member(tmp_path):
+    nodes, edges = vis_data(render(make_campus(tmp_path), tmp_path))
+    ids = [n["id"] for n in nodes]
+    badge = next(n for n in nodes if n["id"] == "grp:acc1|phone")
+    assert badge["hidden"] is True and badge["shape"] == "box" and badge["level"] == 3
+    assert badge["label"] == "\U0001f4de 5 Phones"
+    assert ids.index("grp:acc1|phone") == ids.index("sep000") - 1  # keeps its slot in the row
+    assert ids.index("grp:acc2|ap") == ids.index("ap0") - 1
+    link = next(e for e in edges if e["id"] == "ge:acc1|phone")
+    assert (link["from"], link["to"], link["hidden"]) == ("acc1", "grp:acc1|phone", True)
+    real = [e["id"] for e in edges if not e["id"].startswith("ge:")]
+    assert real == [f"e{i}" for i in range(len(real))]  # real link ids are untouched
+
+
+def test_a_topology_without_groups_adds_nothing_to_the_canvas(demo_engine, tmp_path):
+    nodes, edges = vis_data(render(demo_engine, tmp_path))
+    # the same 11 devices and 11 drawn links (16 cables, bundled) as before grouping existed
+    assert len(nodes) == 11 and len(edges) == 11
+    assert not any(n["id"].startswith("grp:") for n in nodes)
+    assert not any(e["id"].startswith("ge:") for e in edges)
+
+
+def test_the_page_has_the_simulation_controls_and_stays_self_contained(tmp_path):
+    page = render(make_campus(tmp_path), tmp_path)
+    for needle in (
+        'id="lldp-sim-toggle"',
+        ">Simulate<",
+        "[SIMULATION ACTIVE]",
+        "Isolated: 0 | SPOF: 0",
+        ">Highlight SPOF<",
+        ">Reset<",
+        ">Exit<",
+        'id="lldp-group-toggle"',
+        "Group endpoints",
+        "Simulate Switch Failure / Blast Radius",
+        "Simulate Cable Cut",
+        "[DISCONNECTED]",
+        "SPOF (No Redundancy)",
+    ):
+        assert needle in page, needle
+    assert page.count("window.LLDPSim") == 1 or "root.LLDPSim" in page
+    assert not re.search(r'<script[^>]+src="https?://', page)
+    assert not re.search(r'<link[^>]+href="https?://', page)
+
+
+def test_a_dual_homed_host_is_left_out_of_a_badge_that_its_neighbours_form(tmp_path):
+    engine = GraphEngine(data_dir=tmp_path)
+    sw1, sw2 = engine.resolve(name="sw1"), engine.resolve(name="sw2")
+    engine.set_seed(sw1)
+    engine.add_link(sw1, "Gi48", sw2, "Gi48")
+    for i in range(4):
+        host = engine.resolve(name=f"h{i}", capabilities=["station"])
+        engine.set_endpoint_class(host, "endpoint_server")
+        engine.add_link(sw1, f"Gi{i}", host, "eth0")
+    engine.add_link(sw2, "Gi9", "h2", "eth1")  # h2 is wired to both switches
+    (group,) = detail(render(engine, tmp_path))["groups"]
+    assert group["members"] == ["h0", "h1", "h3"]

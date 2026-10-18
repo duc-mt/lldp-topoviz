@@ -118,6 +118,8 @@ class GraphEngine:
         for key in ("chassis_id", "description", "platform"):
             kept[key] = kept[key] or dropped[key]
         kept["seed"] = kept["seed"] or dropped["seed"]
+        if kept["status"] == STATUS_DISCOVERED:  # a device we logged in to is not a leaf
+            kept["endpoint_class"] = kept["endpoint_class"] or dropped["endpoint_class"]
         self.graph.remove_node(drop)
         for index in (self._by_name, self._by_ip, self._by_chassis):
             for key, owner in index.items():
@@ -184,6 +186,7 @@ class GraphEngine:
                 error_kind="",
                 skip_reason="",
                 skip_code="",
+                endpoint_class="",
                 port_channels=[],
                 lag_note="",
                 platform="",
@@ -253,6 +256,7 @@ class GraphEngine:
             error_kind="",
             skip_reason="",
             skip_code="",
+            endpoint_class="",  # we logged in: whatever it advertised, it is infrastructure
         )
         if hostname:
             attrs["label"] = short_name(hostname)
@@ -273,6 +277,7 @@ class GraphEngine:
             error_kind=kind,
             skip_reason="",
             skip_code="",
+            endpoint_class="",
         )
         if host:
             attrs["address"] = host
@@ -291,6 +296,16 @@ class GraphEngine:
         attrs["skip_reason"] = reason
         attrs["skip_code"] = code if reason else ""
         return True
+
+    def set_endpoint_class(self, node_id: str, endpoint_class: str) -> None:
+        """Record that a neighbor is a leaf endpoint (``endpoint_phone``, ``endpoint_ap``, ...).
+
+        Only a node that was not crawled can be a leaf: a device we logged in to is infrastructure
+        by definition, whatever it advertised.
+        """
+        attrs = self.graph.nodes[node_id]
+        if attrs["status"] == STATUS_DISCOVERED:
+            attrs["endpoint_class"] = endpoint_class
 
     def set_port_channels(self, node_id: str, channels: Iterable[Any], note: str = "") -> None:
         """Store the bundles a crawled device reported (or ``note`` saying why there are none)."""

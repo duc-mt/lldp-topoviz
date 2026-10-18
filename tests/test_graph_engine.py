@@ -305,3 +305,48 @@ def test_discovery_and_platform_are_stored_on_the_device(engine):
         engine.resolve(name="n", platform="something else") == n
         and attrs["platform"] == "cisco WS-C3850"
     )
+
+
+# ---------------------------------------------------------------- leaf endpoint class
+def test_a_node_starts_with_no_endpoint_class_and_only_a_discovered_node_can_get_one(engine):
+    phone = engine.resolve(name="SEP1")
+    assert engine.graph.nodes[phone]["endpoint_class"] == ""
+    engine.set_endpoint_class(phone, "endpoint_phone")
+    assert engine.graph.nodes[phone]["endpoint_class"] == "endpoint_phone"
+
+    switch = engine.resolve(name="sw1")
+    engine.mark_crawled(switch, host="10.0.0.1", device_type="cisco_ios", depth=0)
+    engine.set_endpoint_class(switch, "endpoint_phone")  # we logged in: it is infrastructure
+    assert engine.graph.nodes[switch]["endpoint_class"] == ""
+
+
+def test_merging_keeps_the_class_on_an_uncrawled_node_but_not_on_a_crawled_one(engine):
+    crawled = engine.resolve(name="b")
+    engine.mark_crawled(crawled, host="10.0.0.2", device_type="cisco_ios", depth=1)
+    seen_as_leaf = engine.resolve(name="b-alt")
+    engine.set_endpoint_class(seen_as_leaf, "endpoint_server")
+    engine.merge(keep=crawled, drop=seen_as_leaf)
+    assert engine.graph.nodes[crawled]["endpoint_class"] == ""
+
+    keep, drop = engine.resolve(name="p1"), engine.resolve(name="p1-alt")
+    engine.set_endpoint_class(drop, "endpoint_phone")
+    engine.merge(keep=keep, drop=drop)
+    assert engine.graph.nodes[keep]["endpoint_class"] == "endpoint_phone"
+
+
+def test_the_endpoint_class_reaches_the_snapshot(engine):
+    node = engine.resolve(name="ap1")
+    engine.set_endpoint_class(node, "endpoint_ap")
+    assert engine.to_dict()["nodes"][0]["endpoint_class"] == "endpoint_ap"
+
+
+def test_logging_in_to_a_device_clears_a_leaf_class_it_was_given_earlier(engine):
+    node = engine.resolve(name="dev")
+    engine.set_endpoint_class(node, "endpoint_phone")
+    engine.mark_crawled(node, host="10.0.0.9", device_type="cisco_ios", depth=1)
+    assert engine.graph.nodes[node]["endpoint_class"] == ""
+
+    other = engine.resolve(name="dev2")
+    engine.set_endpoint_class(other, "endpoint_ap")
+    engine.mark_failed(other, "auth failed", host="10.0.0.10", kind="auth")
+    assert engine.graph.nodes[other]["endpoint_class"] == ""

@@ -69,6 +69,19 @@ _CAPABILITY_WORDS = {
     "cable-device": "docsis",
     "other": "other",
 }
+#: IEEE 802.1AB System Capabilities bits (the 16-bit map of the LLDP TLV), lowest bit first.
+#: Note ``0x0008`` is WLAN access point and ``0x0020`` is telephone (not the other way round).
+CAPABILITY_BITS = (
+    (0x0001, "other"),
+    (0x0002, "repeater"),
+    (0x0004, "bridge"),
+    (0x0008, "wlan"),
+    (0x0010, "router"),
+    (0x0020, "telephone"),
+    (0x0040, "docsis"),
+    (0x0080, "station"),
+)
+_HEX_BITMAP = re.compile(r"0x[0-9a-f]{1,4}")
 _NO_VALUE = {"", "-", "--", "n/a", "na", "none", "not advertised", "not-advertised"}
 _NOISE_TOKENS = {
     "not",
@@ -107,8 +120,16 @@ def _flatten_items(value: Any) -> list[Any]:
     return flat
 
 
+def decode_capability_bitmap(bitmap: int) -> frozenset[str]:
+    """Canonical names of the capabilities set in a raw LLDP System Capabilities bitmap.
+
+    ``0x0014`` (bridge + router) -> ``{"bridge", "router"}``. Reserved bits are ignored.
+    """
+    return frozenset(name for bit, name in CAPABILITY_BITS if bitmap & bit)
+
+
 def normalize_capabilities(value: Any) -> frozenset[str]:
-    """Turn ``"B,R"``, ``"Bridge, Router"`` or a list of either into canonical names."""
+    """Turn ``"B,R"``, ``"Bridge, Router"``, a ``0x0014`` bitmap or a list of any into names."""
     items = _flatten_items(value)
     result: set[str] = set()
     for item in items:
@@ -116,7 +137,9 @@ def normalize_capabilities(value: Any) -> frozenset[str]:
             token = token.strip("()")
             if not token or token in _NOISE_TOKENS:
                 continue
-            if token in _CAPABILITY_WORDS:
+            if _HEX_BITMAP.fullmatch(token):
+                result |= decode_capability_bitmap(int(token, 16))
+            elif token in _CAPABILITY_WORDS:
                 result.add(_CAPABILITY_WORDS[token])
             elif len(token) == 1 and token in _CAPABILITY_CODES:
                 result.add(_CAPABILITY_CODES[token])
@@ -140,6 +163,10 @@ class LldpNeighbor:
     # (CDP / FDP report one, e.g. "cisco WS-C3850-48P"). The class keeps its LLDP-era name.
     protocols: frozenset[str] = frozenset({"lldp"})
     platform: str = ""
+    # Set by the parser (src/parser.py ``classify_endpoint``): ``endpoint_phone`` /
+    # ``endpoint_ap`` / ``endpoint_server`` / ``endpoint_generic`` for a leaf endpoint that
+    # must never be logged in to, ``""`` for anything that may be network infrastructure.
+    endpoint_class: str = ""
 
 
 @dataclass(frozen=True)
@@ -345,6 +372,7 @@ def merge_neighbors(groups: Sequence[Sequence[LldpNeighbor]]) -> list[LldpNeighb
                         capabilities=existing.capabilities | neighbor.capabilities,
                         protocols=existing.protocols | neighbor.protocols,
                         platform=existing.platform or neighbor.platform,
+                        endpoint_class=existing.endpoint_class or neighbor.endpoint_class,
                     )
                     break
             else:

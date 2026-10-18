@@ -287,3 +287,23 @@ def test_the_sub_label_falls_back_to_the_platform_when_the_os_is_unknown():
     )
     both = node(address="10.0.0.1", device_type="cisco_nxos", platform="cisco N9K-C93180YC-FX")
     assert sub_label(both) == "10.0.0.1 · NX-OS"  # a known OS wins
+
+
+# ------------------------------------------------- the crawler's leaf class wins
+@pytest.mark.parametrize(
+    ("endpoint_class", "kind"),
+    [
+        ("endpoint_phone", "phone"),
+        ("endpoint_ap", "ap"),
+        ("endpoint_server", "endpoint"),
+        ("endpoint_generic", "endpoint"),
+    ],
+)
+def test_the_recorded_leaf_class_decides_the_icon_even_next_to_bridge(endpoint_class, kind):
+    attrs = node(capabilities=["bridge", "router"], endpoint_class=endpoint_class)
+    assert classify_node(attrs, "x") == kind
+
+
+def test_no_leaf_class_changes_nothing():
+    assert classify_node(node(capabilities=["bridge"], endpoint_class=""), "x") == "switch"
+    assert classify_node(node(capabilities=["bridge"]), "x") == "switch"

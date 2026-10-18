@@ -224,3 +224,62 @@ def test_cdp_alone_maps_the_cisco_part_of_the_network(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == cli.EXIT_OK  # fw1 and the other non-CDP neighbors are simply never discovered
     assert "Devices   : 5 (4 crawled, 0 failed, 1 not crawled)" in out
+
+
+def test_the_console_report_lists_the_blind_spots_of_the_demo(tmp_path, capsys):
+    run_demo(tmp_path, "--dry-run")
+    text = capsys.readouterr().out
+    assert "[WARN] TOPOLOGY BLIND SPOTS (INCOMPLETE PHYSICAL COVERAGE):" in text
+    assert "- 7 device(s) successfully crawled." in text
+    assert "- 3 blind spot(s) detected (downstream branches missing):" in text
+    assert "Hostname: 'isp-edge'" in text
+    assert "-> Discovered via: core1 on port Gi1/0/48 (IP: 203.0.113.1)" in text
+    assert "-> Reason: OUT_OF_SCOPE (IP not in crawl.allowed_subnets)" in text
+    assert "Add 203.0.113.0/24 to crawl.allowed_subnets" in text
+    assert "-> Reason: NO_MGMT_IP" in text and "-> Reason: CRAWL_ERROR" in text
+    assert "SEP001122334455'" not in text.split("BLIND SPOTS")[1]  # a phone is not a blind spot
+
+
+def test_devices_excluded_in_the_settings_are_reported_as_such(tmp_path, capsys):
+    settings = tmp_path / "s.yaml"
+    settings.write_text(
+        yaml.safe_dump(
+            {
+                "seed": {"host": "10.0.0.1", "device_type": "cisco_ios"},
+                "crawl": {
+                    "allowed_subnets": ["10.0.0.0/16"],
+                    "exclude_hostnames": ["^fw1$", "^isp-edge$", "^ap-lobby$"],
+                },
+            }
+        )
+    )
+    code = cli.main(
+        [
+            "--config",
+            str(settings),
+            "--replay",
+            str(DEMO),
+            "--dry-run",
+            "--output",
+            str(tmp_path / "t.html"),
+        ]
+    )
+    text = capsys.readouterr().out
+    assert code == cli.EXIT_OK  # nothing failed: fw1 is excluded, not polled
+    assert "- 3 blind spot(s) detected" in text
+    assert text.count("-> Reason: EXCLUDED (matches crawl.exclude_hostnames)") == 3
+    assert "OUT_OF_SCOPE" not in text and "CRAWL_ERROR" not in text
+
+
+def test_the_snapshot_and_the_viewer_carry_the_blind_spots(tmp_path, isolated_data_dir):
+    code, out = run_demo(tmp_path)
+    snapshot = json.loads((isolated_data_dir / "current_state.json").read_text())
+    spots = snapshot["metadata"]["blind_spots"]
+    assert [(s["hostname"], s["reason"]) for s in spots] == [
+        ("ap-lobby", "NO_MGMT_IP"),
+        ("fw1", "CRAWL_ERROR"),
+        ("isp-edge", "OUT_OF_SCOPE"),
+    ]
+    assert spots[2]["discovered_via"] == "core1" and spots[2]["parent_port"] == "Gi1/0/48"
+    page = out.read_text(encoding="utf-8")
+    assert '"reason":"OUT_OF_SCOPE"' in page.replace(" ", "") and "blind_spots" in page

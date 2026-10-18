@@ -34,10 +34,11 @@ import networkx as nx
 from pyvis.network import Network
 
 from src import MapperError, normalize_interface
-from src.diagram_assets import PAGE_CSS, PAGE_JS
+from src.diagram_assets import PAGE_CSS, PAGE_JS, SIM_CSS, SIM_ENGINE_JS, SIM_UI_JS
 from src.enrichment import (
     STYLE_COLORS,
     STYLE_ORDER,
+    TIER_ORDER,
     TIER_TITLES,
     NodeTypeRules,
     TierLayout,
@@ -109,6 +110,74 @@ def _script_json(data: Any) -> str:
     )
 
 
+#: A switch needs at least this many leaf endpoints of one class for them to fold into one badge.
+GROUP_MIN = 3
+_GROUP_STYLE = {  # leaf class -> (icon, plural noun)
+    "phone": ("\U0001f4de", "Phones"),
+    "ap": ("\U0001f4f6", "Access Points"),
+    "server": ("\U0001f5a5", "Hosts"),
+    "generic": ("\U0001f5a5", "Endpoints"),
+}
+_LEAF_BY_CLASS = {
+    "endpoint_phone": "phone",
+    "endpoint_ap": "ap",
+    "endpoint_server": "server",
+    "endpoint_generic": "generic",
+}
+_LEAF_BY_KIND = {"phone": "phone", "ap": "ap", "endpoint": "generic"}
+
+
+def _leaf_class(attrs: dict[str, Any], kind: str) -> str:
+    """``phone`` / ``ap`` / ``server`` / ``generic`` for an end device, ``""`` for infrastructure.
+
+    The class the crawler recorded wins; a graph built another way falls back to the icon type.
+    """
+    return _LEAF_BY_CLASS.get(str(attrs.get("endpoint_class") or "")) or _LEAF_BY_KIND.get(kind, "")
+
+
+def _leaf_groups(graph: nx.MultiGraph, infos: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Leaf endpoints that fold into one badge per switch: ``[{id, edge, sw, leaf, text, ...}]``.
+
+    A device joins a group only if it is a leaf, hangs off exactly one link (a dual-homed server
+    is never hidden), is not the seed and its link has no link-check finding to keep visible.
+    A switch needs :data:`GROUP_MIN` such devices of one class to get a group.
+    """
+    warned = {
+        node for u, v, data in graph.edges(data=True) if data.get("warnings") for node in (u, v)
+    }
+    buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for node_id in sorted(graph.nodes):
+        info = infos[node_id]
+        if not info["leaf"] or info["seed"] or node_id in warned or len(info["links"]) != 1:
+            continue
+        buckets[(info["links"][0]["peer"], info["leaf"])].append(node_id)
+    groups = []
+    for (switch, leaf), members in sorted(buckets.items()):
+        if len(members) < GROUP_MIN:
+            continue
+        icon, noun = _GROUP_STYLE[leaf]
+        text = f"{icon} {len(members)} {noun}"
+        shown = [infos[m]["label"] for m in members[:20]]
+        more = f"\n+{len(members) - 20} more" if len(members) > 20 else ""
+        groups.append(
+            {
+                "id": _safe(f"grp:{switch}|{leaf}"),
+                "edge": _safe(f"ge:{switch}|{leaf}"),
+                "sw": _safe(switch),
+                "leaf": leaf,
+                "text": text,
+                "title": _safe(
+                    f"{text} on {infos[switch]['label']}\n"
+                    + "\n".join(shown)
+                    + more
+                    + "\nClick to expand or collapse"
+                ),
+                "members": [_safe(m) for m in members],
+            }
+        )
+    return groups
+
+
 @dataclass(frozen=True)
 class VisualOptions:
     """Look-and-feel settings (``visualization:`` in settings.yaml)."""
@@ -178,10 +247,10 @@ class TopologyVisualizer:
             node: classify_node(attrs, str(attrs.get("label") or node), opts.type_rules)
             for node, attrs in graph.nodes(data=True)
         }
-        layout = (
-            assign_tiers(graph, kinds, opts.tier_rules) if opts.layout == "hierarchical" else None
-        )
-        infos = self._node_infos(graph, kinds, layout)
+        # The simulation needs every device's tier even when the force-directed layout is drawn.
+        tiering = assign_tiers(graph, kinds, opts.tier_rules)
+        layout = tiering if opts.layout == "hierarchical" else None
+        infos = self._node_infos(graph, kinds, layout, tiering.tiers)
 
         # directed=True only so Pyvis keeps parallel edges (an undirected Network silently
         # drops a second edge between the same two nodes); the arrows are switched off per edge.
@@ -194,14 +263,30 @@ class TopologyVisualizer:
             cdn_resources="in_line" if opts.inline_resources else "remote",
         )
         net.set_options(json.dumps(self._vis_options()))
+        # A group badge goes in just before its first member, so the layout keeps it in that slot.
+        groups = _leaf_groups(graph, infos)
+        group_at = {g["members"][0]: g for g in groups}
         for node_id in sorted(graph.nodes):
+            if _safe(node_id) in group_at:
+                self._add_group(net, group_at[_safe(node_id)], layout, infos[node_id])
             self._add_node(net, node_id, infos[node_id], layout)
         links = self._add_edges(net, graph)
+        for group in groups:
+            net.add_edge(
+                group["sw"],
+                group["id"],
+                id=group["edge"],
+                hidden=True,
+                width=2,
+                color="#9AA5B1",
+                arrows=_NO_ARROWS,
+                smooth=False if opts.layout == "hierarchical" else {"type": "continuous"},
+            )
 
         page = net.generate_html(notebook=False)
         if opts.inline_resources:
             page = self._make_self_contained(page)
-        page = self._inject_page(page, graph, infos, links, layout, metadata or {})
+        page = self._inject_page(page, graph, infos, links, layout, metadata or {}, groups)
         try:
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
             self.output_path.write_text(page, encoding="utf-8")
@@ -212,9 +297,14 @@ class TopologyVisualizer:
 
     # ------------------------------------------------------------------- nodes
     def _node_infos(
-        self, graph: nx.MultiGraph, kinds: dict[str, str], layout: TierLayout | None
+        self,
+        graph: nx.MultiGraph,
+        kinds: dict[str, str],
+        layout: TierLayout | None,
+        tiers: dict[str, str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Everything known about each device, as plain JSON-able data."""
+        tiers = tiers if tiers is not None else (layout.tiers if layout else {})
         infos: dict[str, dict[str, Any]] = {}
         for node_id, attrs in graph.nodes(data=True):
             status = attrs["status"]
@@ -243,6 +333,13 @@ class TopologyVisualizer:
                 "seed": bool(attrs.get("seed")),
                 "kind": kinds[node_id],
                 "tier": TIER_TITLES[layout.tiers[node_id]] if layout else "",
+                # Failure simulation: how far from the Core (0 = top), whether it is a Core device,
+                # its leaf class (phone / ap / server / generic, '' for infrastructure) and whether
+                # a single uplink makes it a SPOF (infrastructure and servers; not phones, APs ...).
+                "rank": TIER_ORDER.index(tiers[node_id]) if node_id in tiers else 3,
+                "core": tiers.get(node_id) == "core",
+                "leaf": _leaf_class(attrs, kinds[node_id]),
+                "spof_ok": _leaf_class(attrs, kinds[node_id]) in ("", "server"),
                 "os": _safe(os_label(attrs)),
                 "sub": _safe(sub_label(attrs)),
                 "badge": _safe(badge),
@@ -294,6 +391,31 @@ class TopologyVisualizer:
             image=icon_uri(info["kind"], _FILL[info["status"]], info["seed"]),
             size=26 if info["seed"] else 22,
             shapeProperties={"useBorderWithImage": False},
+            **extra,
+        )
+
+    def _add_group(
+        self,
+        net: Network,
+        group: dict[str, Any],
+        layout: TierLayout | None,
+        first_member: dict[str, Any],
+    ) -> None:
+        """The (initially hidden) badge that stands for a group of leaf endpoints."""
+        extra: dict[str, Any] = {}
+        if layout is not None:
+            extra["level"] = layout.levels[group["members"][0]]
+        net.add_node(
+            group["id"],
+            label=group["text"],
+            title=group["title"],
+            shape="box",
+            hidden=True,
+            margin=8,
+            borderWidth=2,
+            shapeProperties={"borderRadius": 14},
+            font={"size": 13, "color": "#1F2933"},
+            color={"background": "#EEF2F6", "border": "#9AA5B1"},
             **extra,
         )
 
@@ -668,6 +790,8 @@ class TopologyVisualizer:
         infos: dict[str, dict[str, Any]],
         links: list[dict[str, Any]],
         layout: TierLayout | None,
+        blind_spots: list[dict[str, Any]] | None = None,
+        groups: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Everything the page script needs, as plain JSON data."""
         problems = [
@@ -730,6 +854,11 @@ class TopologyVisualizer:
             ),
             "tiers": tiers,
             "problems": problems,
+            "groups": groups or [],
+            "blind_spots": [
+                {k: (_safe(v) if isinstance(v, str) else v) for k, v in spot.items()}
+                for spot in (blind_spots or [])
+            ],
         }
 
     def _inject_page(
@@ -740,6 +869,7 @@ class TopologyVisualizer:
         links: list[dict[str, Any]],
         layout: TierLayout | None,
         metadata: dict[str, Any],
+        groups: list[dict[str, Any]] | None = None,
     ) -> str:
         counts = {STATUS_CRAWLED: 0, STATUS_FAILED: 0, STATUS_DISCOVERED: 0}
         for info in infos.values():
@@ -822,7 +952,21 @@ class TopologyVisualizer:
             warn_note = "No interface speed/duplex data, so links were not checked."
 
         markup = f"""
-<style>{PAGE_CSS}</style>
+<style>{PAGE_CSS}{SIM_CSS}</style>
+<div id="lldp-toolbar" role="toolbar" aria-label="Failure simulation and grouping">
+<button type="button" id="lldp-sim-toggle" aria-pressed="false"
+title="Click a device or a link to see what loses its path to the Core">Simulate</button>
+<label id="lldp-group-label" title="Collapse many phones, access points and hosts on one switch into one badge">
+<input type="checkbox" id="lldp-group-toggle" checked> Group endpoints</label>
+</div>
+<div id="lldp-sim-banner" role="status" hidden>
+<div class="sb-row"><span class="sb-tag">[SIMULATION ACTIVE]</span>
+<span class="sb-counts" id="lldp-sim-counts">Isolated: 0 | SPOF: 0</span>
+<span class="sb-btns"><button type="button" id="lldp-sim-spof" aria-pressed="false">Highlight SPOF</button>
+<button type="button" id="lldp-sim-reset">Reset</button><button type="button" id="lldp-sim-exit">Exit</button></span></div>
+<div id="lldp-sim-lines"></div>
+</div>
+<div id="lldp-sim-pop" role="dialog" aria-label="Simulate a failure" hidden></div>
 <div id="lldp-legend" role="note" aria-label="Legend">
 <div class="lg-head"><h1>LLDP topology</h1>
 <button type="button" id="lldp-legend-toggle" aria-expanded="true" aria-controls="lldp-legend-body"
@@ -837,14 +981,17 @@ title="Collapse or expand the legend">&#8211;</button></div>
 <h2>Link checks</h2><ul>{warn_rows}</ul><p class="hint">{warn_note}</p>
 <div id="lldp-warnings"></div>
 <div id="lldp-problems"></div>
+<div id="lldp-blindspots"></div>
 <p class="hint">Click a legend item to highlight it, click again to clear. Click a device or a link for details.
 Text under a name: management IP · OS. Text along a link: the interface at that end (or the port-channel).</p>
 </div>
 </div>
 <aside id="lldp-detail" role="complementary" aria-label="Details" hidden></aside>
-<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, links, layout))};
+<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, links, layout, metadata.get("blind_spots"), groups))};
 window.LLDP_STYLE={_script_json({"bg": self.options.bgcolor, "fg": "#323f4b"})};</script>
 <script>{PAGE_JS}</script>
+<script>{SIM_ENGINE_JS}</script>
+<script>{SIM_UI_JS}</script>
 """
         if "</body>" not in page:
             raise VisualizationError("Pyvis output has no </body>; cannot add the legend")

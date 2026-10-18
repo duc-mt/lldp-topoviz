@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +30,76 @@ from src import MapperError, normalize_interface, short_name
 from src.poller import RawLldp
 from src.textparse import TemplateMismatch, parse_text
 from src.vendors import get_profile, merge_neighbors, row_to_neighbor
-from src.vendors.base import InterfaceStatus, LldpNeighbor, ParserError, PortChannel
+from src.vendors.base import (
+    KNOWN_CAPABILITIES,
+    InterfaceStatus,
+    LldpNeighbor,
+    ParserError,
+    PortChannel,
+)
 
-__all__ = ["BaseParser", "LldpParser", "ParsedDevice", "ParserError"]
+__all__ = [
+    "ENDPOINT_AP",
+    "ENDPOINT_GENERIC",
+    "ENDPOINT_LABELS",
+    "ENDPOINT_PHONE",
+    "ENDPOINT_SERVER",
+    "BaseParser",
+    "LldpParser",
+    "ParsedDevice",
+    "ParserError",
+    "classify_endpoint",
+]
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------ leaf endpoint classes
+ENDPOINT_PHONE = "endpoint_phone"
+ENDPOINT_AP = "endpoint_ap"
+ENDPOINT_SERVER = "endpoint_server"
+ENDPOINT_GENERIC = "endpoint_generic"
+ENDPOINT_LABELS = {
+    ENDPOINT_PHONE: "IP phone",
+    ENDPOINT_AP: "WiFi access point",
+    ENDPOINT_SERVER: "server / host",
+    ENDPOINT_GENERIC: "end device",
+}
+# High-precision wording only: a leaf misread as infrastructure silently drops a device from the
+# coverage audit, so these match the phrases phones and APs really send, not loose keywords.
+_PHONE_HINT = re.compile(r"\bip[- ]?phone\b|\bvoip phone\b|\bsip phone\b", re.IGNORECASE)
+_AP_HINT = re.compile(r"\baccess point\b|\baironet\b|\bAIR-(?:AP|CAP|LAP)", re.IGNORECASE)
+_GENERIC_HINT = re.compile(
+    r"\bip[- ]?cam(?:era)?\b|\bnetwork camera\b|\bprinter\b|\blaserjet\b|\bjetdirect\b",
+    re.IGNORECASE,
+)
+
+
+def classify_endpoint(neighbor: LldpNeighbor) -> str:
+    """Classify a neighbor as a leaf endpoint that must never be logged in to.
+
+    Returns ``endpoint_phone``, ``endpoint_ap``, ``endpoint_server`` or ``endpoint_generic``,
+    or ``""`` when the neighbor may be network infrastructure (or nothing says otherwise).
+
+    * A telephone or WLAN-AP capability is decisive even next to ``bridge``: IP phones with a
+      PC port advertise bridge + telephone, and access points often advertise bridge or router.
+      The same goes for a CDP platform / system description that names a phone or access point.
+    * Otherwise a neighbor advertising ``bridge`` or ``router`` is infrastructure.
+    * A neighbor advertising only end-device capabilities (station, other, repeater, docsis) is
+      a leaf: ``endpoint_server`` for station, ``endpoint_generic`` for the rest.
+    * A neighbor advertising nothing is *not* assumed to be a leaf (some switch templates carry
+      no capabilities at all) unless it names itself a camera or printer.
+    """
+    caps = neighbor.capabilities
+    text = f"{neighbor.platform} {neighbor.description}"
+    if "telephone" in caps or _PHONE_HINT.search(text):
+        return ENDPOINT_PHONE
+    if "wlan" in caps or _AP_HINT.search(text):
+        return ENDPOINT_AP
+    if caps & {"router", "bridge"}:
+        return ""
+    if caps & KNOWN_CAPABILITIES:
+        return ENDPOINT_SERVER if "station" in caps else ENDPOINT_GENERIC
+    return ENDPOINT_GENERIC if _GENERIC_HINT.search(text) else ""
 
 
 @dataclass
@@ -142,7 +208,11 @@ class LldpParser(BaseParser):
         for name, note in notes.items():
             logger.info("%s: %s not used (%s)", raw.host, name.upper(), note)
 
-        neighbors = merge_neighbors(groups)
+        # Classified after the merge: LLDP capabilities and the CDP platform are judged together.
+        neighbors = [
+            replace(neighbor, endpoint_class=classify_endpoint(neighbor))
+            for neighbor in merge_neighbors(groups)
+        ]
         if not neighbors:
             logger.warning(
                 "%s reported no neighbors via %s (is discovery enabled on it?)",

@@ -28,6 +28,7 @@ from src.crawler import CrawlConfig, Crawler, CrawlResult
 from src.graph_engine import STATUS_DISCOVERED, STATUS_FAILED, GraphEngine
 from src.parser import LldpParser
 from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
+from src.report import blind_spots_payload, format_blind_spots
 from src.vendors import load_custom_vendors, supported_device_types
 from src.visualizer import TopologyVisualizer, VisualOptions
 
@@ -192,6 +193,9 @@ def print_summary(result: CrawlResult, engine: GraphEngine) -> None:
     section_out("Not crawled", skipped)
     if result.limit_hit:
         print("\n !! crawl.max_devices was reached; the map may be incomplete.")
+    blind_spots = format_blind_spots(result.blind_spots, counts["crawled"])
+    if blind_spots:
+        print(f"\n{blind_spots}")
 
 
 def build_poller(
@@ -296,6 +300,7 @@ def run(args: argparse.Namespace) -> int:
         "sessions": result.attempted,
         "failed": [{"host": h, "error": e} for h, e in result.failures],
         "partial": result.partial,
+        "blind_spots": blind_spots_payload(result.blind_spots),
     }
     if args.dry_run:
         print("\n [DRY RUN] Snapshot not written.")

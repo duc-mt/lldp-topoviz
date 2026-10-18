@@ -607,6 +607,274 @@ def test_multi_ip_neighbor_fallback_respects_max_devices():
     assert "max_devices limit (2)" in reason(engine, "b")
 
 
+# ------------------------------------------------------------------- leaf guard
+LEAVES = [
+    # name, LLDP capabilities, description, expected class
+    ("phone-1", "T", "", "endpoint_phone"),
+    (
+        "phone-2",
+        "B,T",
+        "Cisco IP Phone 8841",
+        "endpoint_phone",
+    ),  # PC-port phone: bridge + telephone
+    ("ap-1", "W", "", "endpoint_ap"),
+    ("ap-2", "B,R", "Cisco Aironet 2802 Access Point", "endpoint_ap"),
+    ("srv-1", "S", "", "endpoint_server"),
+    ("cam-1", "", "AXIS P3245 Network Camera", "endpoint_generic"),
+    ("hub-1", "O", "", "endpoint_generic"),
+]
+
+
+def leaf_devices():
+    rows = [
+        row(f"Gi1/0/{i}", name, "p1", f"10.0.0.{50 + i}", caps=caps, desc=desc)
+        for i, (name, caps, desc, _cls) in enumerate(LEAVES, start=1)
+    ]
+    # every leaf answers on SSH in this fake network: only the guard keeps the crawler away
+    devices = {f"10.0.0.{50 + i}": (name, []) for i, (name, *_rest) in enumerate(LEAVES, start=1)}
+    return {"10.0.0.1": ("a", rows), **devices}
+
+
+def test_leaf_endpoints_are_drawn_but_never_logged_in_to():
+    result, engine, poller = crawl(leaf_devices())
+    assert poller.calls == ["10.0.0.1"]
+    assert result.attempted == 1 and not result.partial
+    for name, _caps, _desc, expected in LEAVES:
+        attrs = engine.graph.nodes[name]
+        assert attrs["endpoint_class"] == expected, name
+        assert attrs["status"] == STATUS_DISCOVERED and attrs["skip_code"] == "capabilities"
+        assert engine.graph.has_edge("a", name)  # still part of the diagram
+
+
+def test_leaf_guard_reason_names_the_class_and_the_evidence():
+    _, engine, _ = crawl(leaf_devices())
+    assert "leaf endpoint (IP phone, from bridge, telephone): never logged in to" in reason(
+        engine, "phone-2"
+    )
+    assert "capabilities (telephone) do not include any of" in reason(engine, "phone-1")
+    assert "leaf endpoint (end device, from platform / description)" in reason(engine, "cam-1")
+
+
+def test_leaf_endpoints_are_never_blind_spots():
+    # out of scope, no address, excluded: whatever else is true of them, a phone has no branch
+    devices = {
+        "10.0.0.1": (
+            "a",
+            [
+                row("Gi1", "far-phone", "p1", "192.0.2.60", caps="T"),
+                row("Gi2", "noip-ap", "e0", "", caps="B,R", desc="Cisco Aironet Access Point"),
+            ],
+        )
+    }
+    result, engine, _ = crawl(devices)
+    assert engine.graph.nodes["far-phone"]["endpoint_class"] == "endpoint_phone"
+    assert engine.graph.nodes["noip-ap"]["endpoint_class"] == "endpoint_ap"
+    assert result.blind_spots == []
+
+
+def test_unknown_capabilities_are_still_crawled():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "mystery", "x", "10.0.0.62", caps="")]),
+        "10.0.0.62": ("mystery", []),
+    }
+    _, engine, poller = crawl(devices)
+    assert poller.calls == ["10.0.0.1", "10.0.0.62"]
+    assert engine.graph.nodes["mystery"]["endpoint_class"] == ""
+
+
+def test_the_guard_keeps_the_existing_explicit_opt_outs():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "phone", "p1", "10.0.0.60", caps="B,T")]),
+        "10.0.0.60": ("phone", []),
+    }
+    _, _, poller = crawl(devices)
+    assert poller.calls == ["10.0.0.1"]
+    _, _, poller = crawl(devices, require_capabilities=[])  # the documented switch-off
+    assert "10.0.0.60" in poller.calls
+    _, _, poller = crawl(devices, device_overrides={"phone": {"host": "10.0.0.60"}})
+    assert "10.0.0.60" in poller.calls
+
+
+def test_a_crawled_device_is_never_relabelled_a_leaf():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2", caps="B")]),
+        "10.0.0.2": (
+            "b",
+            [row("Gi1", "a", "Gi1", "10.0.0.1", caps="B,T")],
+        ),  # odd, but b is crawled
+    }
+    _, engine, _ = crawl(devices)
+    assert statuses(engine) == {"a": STATUS_CRAWLED, "b": STATUS_CRAWLED}
+    assert engine.graph.nodes["a"]["endpoint_class"] == ""
+
+
+# ------------------------------------------------------------------ blind spots
+def spot(result, name):
+    return next(b for b in result.blind_spots if b.hostname == name)
+
+
+def blind_spot_network():
+    return {
+        "10.0.0.1": (
+            "core",
+            [
+                row("Gi1/0/24", "far", "Gi1", "192.0.2.5", chassis="00:1a:2b:3c:4d:5e"),
+                row("Gi1/0/2", "locked", "Gi1", "10.0.0.2"),
+                row("Gi1/0/3", "slow", "Gi1", "10.0.0.3"),
+                row("Gi1/0/4", "refused", "Gi1", "10.0.0.4"),
+                row("Gi1/0/5", "fgt", "port1", "10.0.0.5", desc="Fortinet FortiOS 7.2"),
+                row("Gi1/0/6", "noip", "Gi1", ""),
+                row("Gi1/0/7", "ap-1", "Gi1", "10.0.0.7"),
+                row("Gi1/0/8", "broken", "Gi1", "10.0.0.8"),
+                row("Gi1/0/9", "phone", "p1", "10.0.0.9", caps="T"),
+            ],
+        ),
+        "10.0.0.2": PollerError("auth failed for 10.0.0.2", kind="auth"),
+        "10.0.0.3": PollerError("timed out talking to 10.0.0.3", kind="timeout"),
+        "10.0.0.4": PollerError("connection refused by 10.0.0.4", kind="connect"),
+        "10.0.0.8": PollerError("10.0.0.8 rejected the command", kind="rejected"),
+    }
+
+
+def test_every_kind_of_uncrawled_infrastructure_becomes_a_blind_spot():
+    result, _, _ = crawl(blind_spot_network(), exclude_hostnames=["^ap-"])
+    reasons = {b.hostname: b.reason for b in result.blind_spots}
+    assert reasons == {
+        "far": "OUT_OF_SCOPE",
+        "locked": "AUTH_FAILURE",
+        "slow": "TIMEOUT",
+        "refused": "CONNECT_FAILURE",
+        "fgt": "UNSUPPORTED_OS",
+        "noip": "NO_MGMT_IP",
+        "ap-1": "EXCLUDED",
+        "broken": "CRAWL_ERROR",
+    }  # the phone is not here
+
+
+def test_a_blind_spot_records_who_saw_it_where_and_why():
+    result, _, _ = crawl(blind_spot_network())
+    far = spot(result, "far")
+    assert far.chassis_id == "00:1a:2b:3c:4d:5e"
+    assert far.management_ip == "192.0.2.5"
+    assert (far.discovered_via, far.parent_port) == ("core", "Gi1/0/24")
+    assert "192.0.2.5 is outside crawl.allowed_subnets" in far.detail
+    assert (far.node_id, far.parent_id) == ("far", "core")
+    locked = spot(result, "locked")
+    assert locked.management_ip == "10.0.0.2"  # the address the crawler tried
+    assert locked.detail == "auth failed for 10.0.0.2"
+    assert spot(result, "noip").management_ip is None
+
+
+def test_blind_spots_are_listed_by_parent_port_and_name():
+    result, _, _ = crawl(blind_spot_network())
+    ports = [b.parent_port for b in result.blind_spots]
+    assert ports == sorted(ports)
+
+
+def test_the_blind_spot_names_the_crawled_switch_closest_to_the_seed():
+    devices = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2")]),
+        "10.0.0.2": (
+            "b",
+            [row("Gi1", "a", "Gi1", "10.0.0.1"), row("Gi2", "c", "Gi1", "10.0.0.3")],
+        ),
+        "10.0.0.3": (
+            "c",
+            [row("Gi1", "b", "Gi2", "10.0.0.2"), row("Gi2", "far", "Gi1", "192.0.2.9")],
+        ),
+    }
+    devices["10.0.0.2"][1].append(row("Gi3", "far", "Gi2", "192.0.2.9"))  # b sees it too
+    result, _, _ = crawl(devices)
+    far = spot(result, "far")
+    assert (far.discovered_via, far.parent_port) == ("b", "Gi3")  # depth 1 beats c at depth 2
+
+
+def test_a_device_skipped_from_one_switch_but_crawled_via_another_is_not_a_blind_spot():
+    devices = {
+        "10.0.0.1": (
+            "a",
+            [row("Gi1", "b", "Gi1", "10.0.0.2"), row("Gi2", "x", "Gi1", "192.0.2.9")],
+        ),
+        "10.0.0.2": ("b", [row("Gi1", "a", "Gi1", "10.0.0.1"), row("Gi2", "x", "Gi2", "10.0.0.9")]),
+        "10.0.0.9": ("x", []),
+    }
+    result, engine, _ = crawl(devices)
+    assert statuses(engine)["x"] == STATUS_CRAWLED
+    assert result.blind_spots == []
+
+
+def test_depth_and_device_limits_are_blind_spots_too():
+    chain = {
+        "10.0.0.1": ("a", [row("Gi1", "b", "Gi1", "10.0.0.2")]),
+        "10.0.0.2": ("b", [row("Gi1", "c", "Gi1", "10.0.0.3")]),
+    }
+    result, _, _ = crawl(chain, max_depth=1)
+    assert [(b.hostname, b.reason) for b in result.blind_spots] == [("c", "LIMIT_REACHED")]
+
+    many = {
+        "10.0.0.1": ("a", [row("Gi1", f"n{i}", "Gi1", f"10.0.0.{i + 10}") for i in range(5)]),
+        **{f"10.0.0.{i + 10}": (f"n{i}", []) for i in range(5)},
+    }
+    result, engine, _ = crawl(many, max_devices=3)
+    assert {b.hostname for b in result.blind_spots} == {"n2", "n3", "n4"}
+    assert {b.reason for b in result.blind_spots} == {"LIMIT_REACHED"}
+    assert engine.graph.nodes["n4"]["skip_code"] == "max_devices"
+
+
+def test_an_out_of_scope_neighbor_is_a_blind_spot_but_not_a_failed_crawl():
+    devices = {"10.0.0.1": ("a", [row("Gi1", "far", "Gi1", "192.0.2.50")])}
+    result, _, _ = crawl(devices)
+    assert [b.reason for b in result.blind_spots] == ["OUT_OF_SCOPE"]
+    assert not result.partial  # exit codes are unchanged by this report
+
+
+def test_a_fully_mapped_network_has_no_blind_spots():
+    result, _, _ = crawl(RING)
+    assert result.blind_spots == []
+
+
+def test_blind_spots_of_the_bundled_demo(demo_dir):
+    engine = GraphEngine(data_dir="/tmp/lldp-test-unused")
+    result = Crawler(
+        FilePoller(demo_dir),
+        LldpParser(),
+        engine,
+        make_config(max_devices=50),
+        "10.0.0.1",
+        "cisco_ios",
+    ).run()
+    assert [
+        (b.hostname, b.reason, b.discovered_via, b.parent_port, b.management_ip)
+        for b in result.blind_spots
+    ] == [
+        ("ap-lobby", "NO_MGMT_IP", "acc1", "Ethernet5", None),
+        ("fw1", "CRAWL_ERROR", "core1", "Gi1/0/10", "10.0.0.250"),
+        ("isp-edge", "OUT_OF_SCOPE", "core1", "Gi1/0/48", "203.0.113.1"),
+    ]
+    assert engine.graph.nodes["sep001122334455"]["endpoint_class"] == "endpoint_phone"
+
+
+def test_a_leaf_verdict_from_one_switch_is_not_overturned_by_another_switchs_report():
+    devices = {
+        "10.0.0.1": (
+            "a",
+            [row("Gi1", "b", "Gi1", "10.0.0.2"), row("Gi2", "dev", "p1", "10.0.0.9", caps="T")],
+        ),
+        "10.0.0.2": (
+            "b",
+            [row("Gi1", "a", "Gi1", "10.0.0.1"), row("Gi2", "dev", "eth0", "10.0.0.9", caps="B,R")],
+        ),
+        "10.0.0.9": ("dev", []),
+    }
+    result, engine, poller = crawl(devices)
+    assert (
+        "10.0.0.9" not in poller.calls
+    )  # b calls it a router, a called it a phone: not logged in to
+    assert engine.graph.nodes["dev"]["endpoint_class"] == "endpoint_phone"
+    assert "another switch's report" in reason(engine, "dev")
+    assert result.blind_spots == []
+
+
 def test_dns_resolution_is_cached(monkeypatch):
     calls = []
 

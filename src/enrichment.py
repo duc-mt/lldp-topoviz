@@ -47,6 +47,13 @@ _PHONE_DESC = re.compile(r"\bphone\b|\bsip\b", re.IGNORECASE)
 # CDP / FDP report the hardware platform ("cisco AIR-AP2802I", "Cisco IP Phone 7960")
 _AP_PLATFORM = re.compile(r"\bAIR-|aironet|\bC9[1-3]\d{2}[A-Z]*AX", re.IGNORECASE)
 _PHONE_PLATFORM = re.compile(r"ip phone|\bphone\b", re.IGNORECASE)
+# Leaf classes the crawler records (src/parser.py classify_endpoint) -> icon type.
+_ENDPOINT_KINDS = {
+    "endpoint_phone": "phone",
+    "endpoint_ap": "ap",
+    "endpoint_server": "endpoint",
+    "endpoint_generic": "endpoint",
+}
 _SWITCH_TYPES = {
     "cisco_ios",
     "cisco_xe",
@@ -96,14 +103,18 @@ class NodeTypeRules:
 def classify_node(attrs: dict[str, Any], label: str, rules: NodeTypeRules | None = None) -> str:
     """Pick the icon type of a device.
 
-    Order: a settings override, firewall hints (LLDP has no firewall capability, so this is a
-    keyword guess on the description, the CDP hardware platform and the hostname), phone / AP
+    Order: a settings override, the leaf class the crawler recorded, firewall hints (LLDP has no
+    firewall capability, so this is a keyword guess on the description, the CDP hardware platform
+    and the hostname), phone / AP
     platforms, router hints, then the system capabilities (WLAN AP, telephone, router, bridge),
     then the platform.
     """
     forced = rules.match(label) if rules else None
     if forced:
         return forced
+    leaf = _ENDPOINT_KINDS.get(str(attrs.get("endpoint_class") or ""))
+    if leaf:  # the crawler's leaf guard already decided what this is
+        return leaf
     description = str(attrs.get("description") or "")
     platform = str(attrs.get("platform") or "")
     text = f"{description} {platform}"

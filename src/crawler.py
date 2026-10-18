@@ -28,9 +28,21 @@ from typing import Any, NamedTuple
 
 from src import MapperError, extract_ipv4, is_ipv4, normalize_hostname, normalize_interface
 from src.config import ConfigError, as_int, section
-from src.graph_engine import STATUS_CRAWLED, STATUS_FAILED, GraphEngine
+from src.graph_engine import STATUS_CRAWLED, STATUS_DISCOVERED, STATUS_FAILED, GraphEngine
 from src.linkcheck import LinkCheckConfig
-from src.parser import BaseParser
+from src.models import (
+    REASON_AUTH_FAILURE,
+    REASON_CONNECT_FAILURE,
+    REASON_CRAWL_ERROR,
+    REASON_EXCLUDED,
+    REASON_LIMIT_REACHED,
+    REASON_NO_MGMT_IP,
+    REASON_OUT_OF_SCOPE,
+    REASON_TIMEOUT,
+    REASON_UNSUPPORTED_OS,
+    BlindSpot,
+)
+from src.parser import ENDPOINT_LABELS, BaseParser
 from src.poller import BasePoller, RawLldp
 from src.vendors import guess_device_type, is_supported
 from src.vendors.base import KNOWN_CAPABILITIES, LldpNeighbor, normalize_capabilities
@@ -174,10 +186,34 @@ class CrawlConfig:
 
 
 class _Skip(NamedTuple):
-    """Why a neighbor is not crawled: a short machine-readable code and the readable reason."""
+    """Why a neighbor is not crawled: a short machine-readable code and the readable reason.
+
+    ``endpoint`` is the leaf-endpoint class (``endpoint_phone``, ...) when the neighbor is not
+    crawled because it is a leaf; empty for every other reason.
+    """
 
     code: str
     reason: str
+    endpoint: str = ""
+
+
+#: Not-crawled reason codes (``skip_code``) that leave a branch unmapped, and what they are called
+#: in the blind-spot report. ``capabilities`` (a leaf endpoint) is deliberately absent.
+_SKIP_TO_BLIND_SPOT = {
+    "out_of_scope": REASON_OUT_OF_SCOPE,
+    "no_ip": REASON_NO_MGMT_IP,
+    "no_profile": REASON_UNSUPPORTED_OS,
+    "excluded": REASON_EXCLUDED,
+    "max_depth": REASON_LIMIT_REACHED,
+    "max_devices": REASON_LIMIT_REACHED,
+}
+#: The same for failed crawls (``error_kind``); kinds not listed become ``CRAWL_ERROR``.
+_FAILURE_TO_BLIND_SPOT = {
+    "auth": REASON_AUTH_FAILURE,
+    "timeout": REASON_TIMEOUT,
+    "connect": REASON_CONNECT_FAILURE,
+    "unsupported": REASON_UNSUPPORTED_OS,
+}
 
 
 @dataclass
@@ -204,6 +240,7 @@ class CrawlResult:
     warned_links: int = 0  # links with at least one link-check warning
     limit_hit: bool = False
     duration: float = 0.0
+    blind_spots: list[BlindSpot] = field(default_factory=list)  # uncrawled infrastructure
 
     @property
     def partial(self) -> bool:
@@ -325,7 +362,9 @@ class Crawler:
             if limit is not None and result.attempted >= limit:
                 result.limit_hit = True
                 if target.node_id:
-                    self.engine.mark_skipped(target.node_id, f"max_devices limit ({limit}) reached")
+                    self.engine.mark_skipped(
+                        target.node_id, f"max_devices limit ({limit}) reached", "max_devices"
+                    )
                 continue
 
             self._visited_hosts.add(host_key)
@@ -343,6 +382,7 @@ class Crawler:
         result.duration = time.monotonic() - started
         result.bundled_links = self.engine.annotate_bundles()
         result.warned_links = self.engine.annotate_links(self.config.link_checks)
+        result.blind_spots = self._collect_blind_spots()
         if result.crawled == 0:
             reason = result.failures[0][1] if result.failures else "no device was crawled"
             raise CrawlError(f"Could not crawl the seed device {self.seed_host}: {reason}")
@@ -372,7 +412,9 @@ class Crawler:
                         result.limit_hit = True
                         if target.node_id:
                             self.engine.mark_skipped(
-                                target.node_id, f"max_devices limit ({limit}) reached"
+                                target.node_id,
+                                f"max_devices limit ({limit}) reached",
+                                "max_devices",
                             )
                         return
                     logger.warning(
@@ -512,8 +554,12 @@ class Crawler:
             return
         if neighbor_id in self._queued_nodes:
             return
-        decision = self._decide(neighbor, depth)
+        decision = self._decide(
+            neighbor, depth, self.engine.graph.nodes[neighbor_id]["endpoint_class"]
+        )
         if isinstance(decision, _Skip):  # a reason not to crawl it
+            if decision.endpoint:
+                self.engine.set_endpoint_class(neighbor_id, decision.endpoint)
             if self.engine.mark_skipped(neighbor_id, decision.reason, decision.code):
                 logger.info("Not crawling %s: %s", self.engine.label(neighbor_id), decision.reason)
             return
@@ -526,10 +572,13 @@ class Crawler:
         logger.debug("Queued %s (%s) at depth %d", host, device_type, depth)
 
     def _decide(
-        self, neighbor: LldpNeighbor, depth: int
+        self, neighbor: LldpNeighbor, depth: int, known_endpoint: str = ""
     ) -> tuple[str, tuple[str, ...], str] | _Skip:
         """Return ``(host, remaining_hosts, device_type)`` to crawl the neighbor, or the reason
         not to.
+
+        ``known_endpoint`` is the leaf class an earlier report from another switch gave this
+        device; a leaf verdict is never overturned by a later, different report.
         """
         cfg = self.config
         name_key = normalize_hostname(neighbor.neighbor_name)
@@ -554,6 +603,24 @@ class Crawler:
                 "capabilities",
                 f"capabilities ({', '.join(sorted(known_caps))}) do not include any of "
                 f"{', '.join(sorted(cfg.require_capabilities))}",
+                neighbor.endpoint_class,
+            )
+
+        # Leaf Guard. The check above catches neighbors that advertise only end-device
+        # capabilities; this one catches a leaf that also claims bridge or router (an IP phone
+        # with a PC port, an access point) or that advertises nothing but names itself. Same
+        # opt-outs as the check above (``require_capabilities: []``, a ``device_overrides``
+        # entry); without them a leaf is never queued, so it is never logged in to.
+        endpoint = neighbor.endpoint_class or known_endpoint
+        if endpoint and not override and cfg.require_capabilities:
+            if not neighbor.endpoint_class:
+                evidence = "another switch's report"
+            else:
+                evidence = ", ".join(sorted(known_caps)) if known_caps else "platform / description"
+            return _Skip(
+                "capabilities",
+                f"leaf endpoint ({ENDPOINT_LABELS[endpoint]}, from {evidence}): never logged in to",
+                endpoint,
             )
 
         candidates = (
@@ -591,3 +658,55 @@ class Crawler:
                 "(add one under custom_vendors, or set crawl.device_overrides)",
             )
         return host, remaining_hosts, device_type
+
+    # ------------------------------------------------------------ blind spots
+    def _collect_blind_spots(self) -> list[BlindSpot]:
+        """Every infrastructure neighbor that was seen but not crawled, with who saw it.
+
+        Built from the final graph rather than recorded while crawling, so a device that was
+        skipped from one switch but crawled via another is correctly not a blind spot. Leaf
+        endpoints never appear: they were skipped as ``capabilities``, which is not a blind spot
+        (a phone has no downstream branch to miss).
+        """
+        graph = self.engine.graph
+        spots: list[BlindSpot] = []
+        for node_id, attrs in graph.nodes(data=True):
+            if attrs["status"] == STATUS_FAILED:
+                reason = _FAILURE_TO_BLIND_SPOT.get(attrs["error_kind"], REASON_CRAWL_ERROR)
+                detail = attrs["error"]
+            elif attrs["status"] == STATUS_DISCOVERED and attrs["skip_code"] in _SKIP_TO_BLIND_SPOT:
+                reason = _SKIP_TO_BLIND_SPOT[attrs["skip_code"]]
+                detail = attrs["skip_reason"]
+            else:
+                continue
+            parent, port = self._reporting_switch(node_id)
+            ips = attrs.get("mgmt_ips") or []
+            spots.append(
+                BlindSpot(
+                    hostname=self.engine.label(node_id),
+                    chassis_id=attrs.get("chassis_id") or "",
+                    management_ip=attrs.get("address") or (ips[0] if ips else None),
+                    discovered_via=self.engine.label(parent) if parent else "",
+                    parent_port=port,
+                    reason=reason,
+                    detail=detail,
+                    node_id=node_id,
+                    parent_id=parent or "",
+                )
+            )
+        spots.sort(key=lambda b: (b.discovered_via.lower(), b.parent_port, b.hostname.lower()))
+        return spots
+
+    def _reporting_switch(self, node_id: str) -> tuple[str | None, str]:
+        """The crawled neighbor closest to the seed and its port on the link to ``node_id``."""
+        graph = self.engine.graph
+        best: tuple[tuple[int, str, str], str, str] | None = None
+        for _u, other, data in graph.edges(node_id, data=True):
+            attrs = graph.nodes[other]
+            if attrs["status"] != STATUS_CRAWLED:
+                continue
+            port = data["ports"].get(other, "")
+            key = (attrs["depth"] or 0, self.engine.label(other).lower(), port)
+            if best is None or key < best[0]:
+                best = (key, other, port)
+        return (best[1], best[2]) if best else (None, "")
