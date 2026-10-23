@@ -104,3 +104,17 @@ custom_vendors: {}
 #        fields: {local_interface: LOCAL_INTERFACE, neighbor_name: NEIGHBOR_NAME,
 #                 neighbor_interface: NEIGHBOR_INTERFACE, mgmt_address: MGMT_ADDRESS,
 #                 description: NEIGHBOR_DESCRIPTION, capabilities: CAPABILITIES, platform: PLATFORM}
+
+# Telegram alerting pipeline: notifications for crawl state changes, failures, and link anomalies.
+# Recommended: keep bot_token out of this file and export TELEGRAM_BOT_TOKEN instead.
+telegram:
+  enabled: false
+  bot_token: ""                 # e.g., "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ" (or via TELEGRAM_BOT_TOKEN)
+  chat_id: ""                   # e.g., "-100123456789" or "987654321" (or via TELEGRAM_CHAT_ID)
+  message_thread_id: null       # optional supergroup forum topic ID (or via TELEGRAM_MESSAGE_THREAD_ID)
+  min_severity: warning         # info | warning | critical
+  cooldown_seconds: 300         # anti-flap suppression window in seconds
+  silent: false                 # deliver without push sound
+  send_image: true              # attach topology snapshot when available
+  proxy_url: null               # e.g., "http://proxy.corp.internal:8080" for air-gapped NOCs
+

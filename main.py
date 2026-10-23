@@ -23,9 +23,16 @@ import sys
 from pathlib import Path
 
 from src import MapperError, __version__
-from src.config import ConnectionSettings, SeedSettings, load_settings, section
+from src.config import (
+    ConnectionSettings,
+    SeedSettings,
+    TelegramSettings,
+    load_settings,
+    section,
+)
 from src.crawler import CrawlConfig, Crawler, CrawlResult
 from src.graph_engine import STATUS_DISCOVERED, STATUS_FAILED, GraphEngine
+from src.notifier import TelegramNotifier
 from src.parser import LldpParser
 from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
 from src.report import blind_spots_payload, format_blind_spots
@@ -228,7 +235,7 @@ def build_poller(
     )
 
 
-def run(args: argparse.Namespace) -> int:
+def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> int:
     """Execute the full pipeline once."""
     if args.init:
         target = Path("settings.yaml")
@@ -310,6 +317,50 @@ def run(args: argparse.Namespace) -> int:
         logger.info("Raw CLI output saved to %s", args.save_raw)
     page = visualizer.render(engine.graph, metadata)  # 5. Visualize
     print(f"\n Diagram   : {page}\n")
+
+    if notifier is None:
+        try:
+            telegram_settings = TelegramSettings.from_settings(settings, source=args.config)
+            notifier = TelegramNotifier(telegram_settings)
+        except Exception:
+            notifier = None
+
+    if notifier:
+        if result.partial:
+            summary = (
+                f"Crawl completed with issues: {len(result.failures)} failure(s), "
+                f"{len(result.blind_spots)} blind spot(s)."
+            )
+            if result.limit_hit:
+                summary += " Max devices limit reached."
+            if result.failures:
+                fail_list = "\n".join(f"• {h}: {e}" for h, e in result.failures[:5])
+                if len(result.failures) > 5:
+                    fail_list += f"\n... and {len(result.failures) - 5} more."
+                summary += f"\n\nFailed devices:\n{fail_list}"
+            notifier.send_alert(
+                title="Topology Crawl Incomplete / Warnings",
+                message=summary,
+                level="warning",
+                metadata={
+                    "target": seed.host,
+                    "hint": "Check device credentials, reachability or subnet scope.",
+                },
+            )
+        else:
+            notifier.send_alert(
+                title="Topology Crawl Succeeded",
+                message=(
+                    f"Crawl successful from seed {seed.host}: {result.crawled} devices crawled, "
+                    f"{engine.graph.number_of_edges()} links mapped in {result.duration:.1f}s."
+                ),
+                level="info",
+                metadata={
+                    "target": seed.host,
+                    "hint": "Topology diagram and snapshot updated.",
+                },
+            )
+
     return EXIT_PARTIAL if result.partial else EXIT_OK
 
 
@@ -319,16 +370,38 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+    notifier: TelegramNotifier | None = None
     try:
-        return run(args)
+        try:
+            raw_settings = load_settings(args.config, required=False)
+            telegram_settings = TelegramSettings.from_settings(raw_settings, source=args.config)
+            notifier = TelegramNotifier(telegram_settings)
+        except Exception:
+            notifier = None
+
+        return run(args, notifier=notifier)
     except MapperError as exc:
         logger.error("%s", exc)
+        if notifier:
+            notifier.send_alert(
+                title="Topology Crawl Aborted",
+                message=str(exc),
+                level="critical",
+                metadata={"hint": "Mapper error encountered during execution."},
+            )
         return EXIT_ERROR
     except KeyboardInterrupt:
         logger.error("Interrupted")
         return 130
-    except Exception:  # last-resort guard: log the traceback, return a clean failure code
+    except Exception as exc:  # last-resort guard: log the traceback, return a clean failure code
         logger.exception("Unexpected error")
+        if notifier:
+            notifier.send_alert(
+                title="Topology Pipeline Crash",
+                message=f"Unexpected fatal error: {exc}",
+                level="critical",
+                metadata={"hint": "Check stack trace in logs or journalctl."},
+            )
         return EXIT_UNEXPECTED
 
 

@@ -172,3 +172,99 @@ class ConnectionSettings:
             banner_timeout=as_int(device.get("banner_timeout", 20), "device.banner_timeout", 1),
             read_timeout=as_int(device.get("read_timeout", 60), "device.read_timeout", 1),
         )
+
+
+@dataclass(frozen=True)
+class TelegramSettings:
+    """Telegram alerting and notification parameters."""
+
+    enabled: bool = False
+    bot_token: str = field(default="", repr=False)
+    chat_id: str = ""
+    message_thread_id: int | None = None
+    min_severity: str = "warning"
+    cooldown_seconds: int = 300
+    silent: bool = False
+    send_image: bool = True
+    proxy_url: str | None = None
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: dict[str, Any],
+        source: str | os.PathLike = DEFAULT_CONFIG_PATH,
+    ) -> TelegramSettings:
+        """Build from the ``telegram`` mapping, with ``TELEGRAM_*`` env vars on top."""
+        telegram_cfg = dict(section(settings, "telegram"))
+
+        def _bool_val(raw: Any) -> bool:
+            if isinstance(raw, bool):
+                return raw
+            if isinstance(raw, str):
+                return raw.strip().lower() in ("true", "1", "yes", "on", "t")
+            if isinstance(raw, (int, float)):
+                return bool(raw)
+            return False
+
+        if "TELEGRAM_ENABLED" in os.environ:
+            telegram_cfg["enabled"] = _bool_val(os.environ["TELEGRAM_ENABLED"])
+
+        if os.environ.get("TELEGRAM_BOT_TOKEN"):
+            telegram_cfg["bot_token"] = os.environ["TELEGRAM_BOT_TOKEN"]
+
+        if os.environ.get("TELEGRAM_CHAT_ID"):
+            telegram_cfg["chat_id"] = os.environ["TELEGRAM_CHAT_ID"]
+
+        if "TELEGRAM_MESSAGE_THREAD_ID" in os.environ:
+            val = os.environ["TELEGRAM_MESSAGE_THREAD_ID"].strip()
+            telegram_cfg["message_thread_id"] = int(val) if val else None
+
+        if os.environ.get("TELEGRAM_MIN_SEVERITY"):
+            telegram_cfg["min_severity"] = os.environ["TELEGRAM_MIN_SEVERITY"]
+
+        if os.environ.get("TELEGRAM_COOLDOWN_SECONDS"):
+            telegram_cfg["cooldown_seconds"] = os.environ["TELEGRAM_COOLDOWN_SECONDS"]
+
+        if "TELEGRAM_SILENT" in os.environ:
+            telegram_cfg["silent"] = _bool_val(os.environ["TELEGRAM_SILENT"])
+
+        if "TELEGRAM_SEND_IMAGE" in os.environ:
+            telegram_cfg["send_image"] = _bool_val(os.environ["TELEGRAM_SEND_IMAGE"])
+
+        if os.environ.get("TELEGRAM_PROXY_URL"):
+            telegram_cfg["proxy_url"] = os.environ["TELEGRAM_PROXY_URL"]
+
+        enabled = _bool_val(telegram_cfg.get("enabled", False))
+        bot_token = str(telegram_cfg.get("bot_token") or "").strip()
+        chat_id_val = telegram_cfg.get("chat_id")
+        chat_id = str(chat_id_val).strip() if chat_id_val is not None else ""
+
+        thread_id_val = telegram_cfg.get("message_thread_id")
+        thread_id: int | None = None
+        if thread_id_val is not None and str(thread_id_val).strip() != "":
+            thread_id = as_int(thread_id_val, "telegram.message_thread_id", 1)
+
+        min_sev = str(telegram_cfg.get("min_severity") or "warning").strip().lower()
+        if min_sev not in ("info", "warning", "critical"):
+            min_sev = "warning"
+
+        cooldown = as_int(
+            telegram_cfg.get("cooldown_seconds", 300),
+            "telegram.cooldown_seconds",
+            0,
+        )
+        silent = _bool_val(telegram_cfg.get("silent", False))
+        send_image = _bool_val(telegram_cfg.get("send_image", True))
+        proxy_url = str(telegram_cfg.get("proxy_url") or "").strip() or None
+
+        return cls(
+            enabled=enabled,
+            bot_token=bot_token,
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            min_severity=min_sev,
+            cooldown_seconds=cooldown,
+            silent=silent,
+            send_image=send_image,
+            proxy_url=proxy_url,
+        )

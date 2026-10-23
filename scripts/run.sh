@@ -21,7 +21,22 @@ if [ ! -f "$ROOT_DIR/config/settings.yaml" ] && [ -f "$ROOT_DIR/config/settings.
     echo "Initialized config/settings.yaml from template."
 fi
 
-# 2. Check and bootstrap virtual environment if missing
+# 2. Initialize .env from example template if missing
+if [ ! -f "$ROOT_DIR/.env" ] && [ -f "$ROOT_DIR/.env.example" ]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    chmod 600 "$ROOT_DIR/.env" 2>/dev/null || true
+    echo "Initialized .env from template."
+fi
+
+# 3. Export environment variables from .env if present
+if [ -f "$ROOT_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ROOT_DIR/.env"
+    set +a
+fi
+
+# 4. Check and bootstrap virtual environment if missing
 if [ ! -f "$VENV_PYTHON" ]; then
     echo "Virtual environment not found in .venv. Initializing..."
 
@@ -46,5 +61,5 @@ if [ ! -f "$VENV_PYTHON" ]; then
     fi
 fi
 
-# 3. Execute main.py with virtual environment python forwarding all arguments
+# 5. Execute main.py with virtual environment python forwarding all arguments
 exec "$VENV_PYTHON" "$ROOT_DIR/main.py" "$@"

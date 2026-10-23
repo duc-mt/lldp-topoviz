@@ -1,0 +1,27 @@
+[Unit]
+Description=LLDP TopoViz - Network Discovery & Alerting Pipeline
+Documentation=https://github.com/m-duc/lldp-topoviz
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nms-net
+Group=nms-net
+WorkingDirectory=/home/nms-net/lldp-topoviz
+EnvironmentFile=-/home/nms-net/lldp-topoviz/.env
+ExecStart=/home/nms-net/lldp-topoviz/.venv/bin/python /home/nms-net/lldp-topoviz/main.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=900
+Restart=no
+
+# Hardening measures
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/nms-net/lldp-topoviz/output /home/nms-net/lldp-topoviz/data /tmp
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -25,7 +25,22 @@ if not exist "%ROOT_DIR%config\settings.yaml" (
     )
 )
 
-REM 2. Check and bootstrap virtual environment if missing
+REM 2. Initialize .env from example template if missing
+if not exist "%ROOT_DIR%.env" (
+    if exist "%ROOT_DIR%.env.example" (
+        copy "%ROOT_DIR%.env.example" "%ROOT_DIR%.env" >nul
+        echo Initialized .env from template.
+    )
+)
+
+REM 3. Load environment variables from .env if present
+if exist "%ROOT_DIR%.env" (
+    for /f "usebackq eol=# tokens=1* delims==" %%a in ("%ROOT_DIR%.env") do (
+        set "%%a=%%~b"
+    )
+)
+
+REM 4. Check and bootstrap virtual environment if missing
 if not exist "%VENV_PYTHON%" (
     echo Virtual environment not found in .venv. Initializing...
 
@@ -50,5 +65,5 @@ if not exist "%VENV_PYTHON%" (
     )
 )
 
-REM 3. Execute main.py with virtual environment python forwarding all arguments
+REM 5. Execute main.py with virtual environment python forwarding all arguments
 "%VENV_PYTHON%" "%ROOT_DIR%main.py" %*
