@@ -153,6 +153,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="generate sample settings.yaml in the current directory and exit",
     )
+    ap.add_argument(
+        "--test-telegram",
+        action="store_true",
+        help="send a test alert message to Telegram using current configuration and exit",
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap.parse_args(argv)
@@ -258,6 +263,36 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             "Edit settings.yaml with your seed IP, device type, and credentials."
         )
         return EXIT_OK
+
+    if getattr(args, "test_telegram", False):
+        try:
+            raw_settings = load_settings(args.config, required=False)
+        except Exception:
+            raw_settings = {}
+        if notifier is None:
+            telegram_settings = TelegramSettings.from_settings(raw_settings, source=args.config)
+            notifier = TelegramNotifier(telegram_settings)
+        if not notifier.enabled:
+            print(
+                "[!] Telegram alerting is disabled. Set TELEGRAM_ENABLED=true in .env "
+                "or config/settings.yaml."
+            )
+            return EXIT_ERROR
+        if not notifier.bot_token or not notifier.chat_id:
+            print("[!] Telegram bot_token or chat_id is missing.")
+            return EXIT_ERROR
+        print(f"[*] Sending test alert to Telegram chat ID {notifier.chat_id} ...")
+        success = notifier.send_alert(
+            title="Manual Test Alert",
+            message="Telegram alerting pipeline test triggered manually via --test-telegram.",
+            level="warning",
+            metadata={"source": "Manual CLI", "status": "Operational"},
+        )
+        if success:
+            print("[+] Test alert successfully delivered to Telegram!")
+            return EXIT_OK
+        print("[!] Failed to deliver test alert. Check credentials, chat ID, and network logs.")
+        return EXIT_ERROR
 
     try:
         settings = load_settings(args.config, required=not args.replay)

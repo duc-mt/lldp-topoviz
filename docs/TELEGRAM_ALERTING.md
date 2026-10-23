@@ -68,7 +68,30 @@ telegram:
 
 ---
 
-## 3. Production Scheduling & Concurrency Safety
+## 3. Manual Verification & Ad-Hoc Triggering
+
+You do not need to wait for a scheduled cronjob or run a full network crawl to test your Telegram bot configuration:
+
+### Quick Connectivity Test
+Send an immediate test alert using current `.env` / `settings.yaml` settings:
+```bash
+./run --test-telegram
+```
+
+### Manual Network Crawl Trigger
+To run a crawl manually without cron or systemd:
+```bash
+./run
+# Or using the cron runner script directly with concurrency lock:
+./scripts/run_crawl_cron.sh
+```
+
+> [!NOTE]
+> By default, `TELEGRAM_MIN_SEVERITY` is set to `warning`. When a crawl succeeds with 0 issues, an `info`-level alert is dispatched and filtered out. To receive notifications on every crawl (including clean runs), set `TELEGRAM_MIN_SEVERITY="info"` in `.env`.
+
+---
+
+## 4. Production Scheduling & Concurrency Safety
 
 ### Option A: Recurring Cronjob with `flock`
 Prevent overlapping crawls using the flock wrapper script [`scripts/run_crawl_cron.sh`](file:///home/nms-net/lldp-topoviz/scripts/run_crawl_cron.sh):
@@ -119,7 +142,7 @@ sudo systemctl start lldp-topoviz.service
 
 ---
 
-## 4. Message Format & Fault Tolerance Specifications
+## 5. Message Format & Fault Tolerance Specifications
 
 ### Standardized Layout:
 ```html

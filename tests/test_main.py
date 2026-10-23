@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -283,3 +284,31 @@ def test_the_snapshot_and_the_viewer_carry_the_blind_spots(tmp_path, isolated_da
     assert spots[2]["discovered_via"] == "core1" and spots[2]["parent_port"] == "Gi1/0/48"
     page = out.read_text(encoding="utf-8")
     assert '"reason":"OUT_OF_SCOPE"' in page.replace(" ", "") and "blind_spots" in page
+
+
+def test_test_telegram_flag(tmp_path, monkeypatch, capsys):
+    mock_notifier = MagicMock()
+    mock_notifier.enabled = True
+    mock_notifier.bot_token = "fake"
+    mock_notifier.chat_id = "12345"
+    mock_notifier.send_alert.return_value = True
+
+    monkeypatch.setattr(cli, "TelegramNotifier", lambda cfg: mock_notifier)
+
+    code = cli.main(["--test-telegram"])
+    assert code == cli.EXIT_OK
+    assert mock_notifier.send_alert.called
+    out = capsys.readouterr().out
+    assert "Test alert successfully delivered" in out
+
+
+def test_test_telegram_disabled(tmp_path, monkeypatch, capsys):
+    mock_notifier = MagicMock()
+    mock_notifier.enabled = False
+
+    monkeypatch.setattr(cli, "TelegramNotifier", lambda cfg: mock_notifier)
+
+    code = cli.main(["--test-telegram"])
+    assert code == cli.EXIT_ERROR
+    out = capsys.readouterr().out
+    assert "Telegram alerting is disabled" in out
