@@ -38,6 +38,7 @@ Structure, CLI, logging, error handling and config management deliberately mirro
 - Neighbor device type is guessed from the system description or CDP platform (NX-OS, IOS-XR, IOS/XE, EOS, AOS-CX, VRP),
   with rules and per-device overrides in `settings.yaml`.
 - Offline replay (`--replay`) and capture (`--save-raw`) of the raw CLI output, for tests and demos.
+- **Telegram alerting & daemon scheduling**: Real-time dispatch of crawl completions, partial warnings, and crash events with concurrency-safe scheduling. See [docs/TELEGRAM_ALERTING.md](docs/TELEGRAM_ALERTING.md).
 
 ## Standalone Executable (Zero-Dependency & Air-Gapped)
 
@@ -316,6 +317,22 @@ A capture directory holds, per device, `<host>.txt` (LLDP), `<host>.cdp.txt` (an
 `<host>.lag.txt` and `<host>.status.txt`, plus an `index.yaml` (host -> files, hostname, device type). A device with no
 `<host>.txt` is replayed through its other protocols, like a device whose LLDP is off.
 `captures/` is git-ignored: raw output can contain sensitive data.
+
+## Telegram Alerting & Production Scheduling
+
+LLDP TopoViz includes a production-grade Telegram alerting pipeline that dispatches crawl completion notices, unreachable switch warnings, and unhandled crash reports:
+
+- **Instant Connectivity Test**: Verify bot credentials and chat IDs immediately:
+  ```bash
+  ./run --test-telegram
+  ```
+- **Concurrency-Safe Cron**: Use [`scripts/run_crawl_cron.sh`](scripts/run_crawl_cron.sh) with non-blocking `flock` to avoid overlapping runs:
+  ```cron
+  */15 * * * * /home/nms-net/lldp-topoviz/scripts/run_crawl_cron.sh >> /var/log/lldp-topoviz-cron.log 2>&1
+  ```
+- **Systemd Timer & Service**: Ready-to-use hardened unit files in [`systemd/`](systemd/).
+
+For detailed bot setup, topic threads, cooldown windows, and corporate proxy configuration, refer to the **[Telegram Alerting Operations Guide](docs/TELEGRAM_ALERTING.md)**.
 
 ## Security notes
 
