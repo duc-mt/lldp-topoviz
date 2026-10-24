@@ -37,7 +37,7 @@ from src.parser import LldpParser
 from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
 from src.report import blind_spots_payload, format_blind_spots
 from src.vendors import load_custom_vendors, supported_device_types
-from src.visualizer import TopologyVisualizer, VisualOptions
+from src.visualizer import TopologyVisualizer, VisualOptions, load_snapshot
 
 
 def _get_base_dir() -> Path:
@@ -344,13 +344,17 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
         "partial": result.partial,
         "blind_spots": blind_spots_payload(result.blind_spots),
     }
+    # The run before this one is what current_state.json holds until save() replaces it:
+    # read it first, so the page can offer the Current / Previous / Diff view (also
+    # on a dry run, which saves nothing).
+    previous = load_snapshot(engine.current_path)
     if args.dry_run:
         print("\n [DRY RUN] Snapshot not written.")
     else:
         engine.save(metadata)  # 4. Snapshot
     if args.save_raw:
         logger.info("Raw CLI output saved to %s", args.save_raw)
-    page = visualizer.render(engine.graph, metadata)  # 5. Visualize
+    page = visualizer.render(engine.graph, metadata, previous=previous)  # 5. Visualize
     print(f"\n Diagram   : {page}\n")
 
     if notifier is None:

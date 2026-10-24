@@ -136,7 +136,7 @@ seed -> Crawler queue -> DevicePoller (Netmiko, use_textfsm=True) -> LldpParser 
 | Gold ring | The seed device |
 | Rows with a name at the left | Hierarchy tier: Edge, Core, Distribution, Access, End devices (only rows in use are drawn) |
 | Line under the name | `management IP · OS version` |
-| Text along a link | The interface on the node at that end (short form: `Gi1/0/1`, `Eth1/1`); for a port-channel, the bundle name (`Po1`) |
+| Text along a link | The interface on the node at that end (short form: `Gi1/0/1`, `Eth1/1`); for a port-channel, the bundle name (`Po1`). Shown above zoom 1.20 and on the links of the device you hover or select; *Filter > Always show interface names* keeps them on |
 | Thick link labelled `LACP x2` / `static x2` | A port-channel with 2 member links (`x1/2`: only one of two members is up) |
 | Link colour and thickness | Speed: 100M light grey, 1G slate, 10G blue, 25G teal, 40G purple, 100G magenta, `?` pale grey. It is what the ports run at where a device reports it, otherwise the port type from the name |
 | Dashed link | Seen only through CDP (LLDP did not report it) |
@@ -152,6 +152,23 @@ interfaces with what each end runs at (`1G full`), the warnings, which protocols
 protocol and members. The **Warnings** and **Problems** lists in the legend jump to each link or failed device.
 The legend collapses with its `-` button; click one of its items to highlight what it describes and click again to
 clear. `Esc` or a click on empty space closes the panel.
+
+#### Explorer shell and operations features
+
+The page has a top bar, a sidebar (summary, the legend as collapsible groups) and a tabbed inspector; dark and light
+themes follow the system and are kept in the browser (`lldp-explorer:theme`).
+
+| What | How |
+|---|---|
+| Search | `/` or *Search*: name, IP, port, type, OS; the result list ranks the device's own name first; `Enter` flies to it (`network.focus`) and opens it |
+| Inspector | Click a device or link: **Overview**, **Interfaces & Peers** (filterable), **CLI Diagnostics** with copy-ready read-only commands for Cisco IOS / NX-OS, Arista EOS, Junos, VyOS and Huawei. Each end of a link uses its own device's platform unless you pick one; check the syntax against your software version |
+| Zoom levels | Below 0.50: names only, backbone links (Core/Distribution) stay, the rest fade. 0.50-1.20: name, `management IP`, badge. Above 1.20: interface names |
+| Focus mode | Hover or select a device: its 1-hop and 2-hop neighbourhood stays lit (2-hop softer), the rest fades to 15 %. *Filter* turns it off |
+| Minimap | The 160 x 100 radar at the bottom right: click or drag to move the view |
+| Simulate | `S`: click a device or cable. Besides failure there is **Drain for maintenance** (planned removal, shown amber). The blast radius: **red** lost every path to the Core, **amber** lost redundancy (one uplink left, or fewer uplinks), **blue** still connected but more hops from the Core, with the new path drawn as moving dashes; rings spread from what was taken out |
+| Snapshot | With a previous run (`main.py` reads `current_state.json` before it is replaced) the bottom bar offers **Current State**, **Previous State** and **Diff Overlay**: added green, removed red and dashed, changed orange. It covers devices, cables, port-channel member counts and a port reporting down; a change of speed is not diffed |
+| Documentation | *Export > Export Documentation Bundle*: a clean vector SVG (light, no controls, any resolution) and `TOPOLOGY_SPEC.md` (device table; link matrix with interfaces, speed and redundancy). Software version is the OS and version found in the platform description |
+| Keys | `/` search, `F` fit, `S` simulate, `Esc` deselect |
 
 #### How the diagram decides things
 
@@ -353,7 +370,9 @@ ruff check . && ruff format --check .
 ```
 
 Node.js (>= 16) is recommended for running the full suite. The failure simulation in the HTML viewer is plain
-JavaScript, and `tests/test_simulation.py` runs it under `node` against the same data the page embeds. Without
+JavaScript, and `tests/test_simulation.py` runs it under `node` against the same data the page embeds; the blast
+radius, the CLI runbook and the `TOPOLOGY_SPEC.md` generator are pure functions run the same way by
+`tests/test_explorer_ops.py`. Without
 `node` on your `PATH` those tests are skipped (`pytest -rs` lists them) and everything else still runs. CI installs
 Node 20, so they always run there.
 

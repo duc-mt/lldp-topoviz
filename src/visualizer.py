@@ -34,7 +34,16 @@ import networkx as nx
 from pyvis.network import Network
 
 from src import MapperError, normalize_interface
-from src.diagram_assets import PAGE_CSS, PAGE_JS, SIM_CSS, SIM_ENGINE_JS, SIM_UI_JS
+from src.diagram_assets import (
+    OPS_CSS,
+    OPS_ENGINE_JS,
+    OPS_UI_JS,
+    PAGE_CSS,
+    PAGE_JS,
+    SIM_CSS,
+    SIM_ENGINE_JS,
+    SIM_UI_JS,
+)
 from src.enrichment import (
     STYLE_COLORS,
     STYLE_ORDER,
@@ -108,6 +117,56 @@ def _script_json(data: Any) -> str:
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
     )
+
+
+def load_snapshot(path: str | os.PathLike) -> dict[str, Any] | None:
+    """Read a ``current_state.json`` / ``previous_state.json`` snapshot (``None`` if missing or unreadable)."""
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) and isinstance(payload.get("nodes"), list) else None
+
+
+def graph_from_snapshot(payload: dict[str, Any]) -> nx.MultiGraph:
+    """Rebuild the topology graph from a snapshot written by :meth:`GraphEngine.save`."""
+    graph: nx.MultiGraph = nx.MultiGraph()
+    for node in payload.get("nodes", []):
+        attrs = {k: v for k, v in node.items() if k != "id"}
+        attrs.setdefault("status", STATUS_DISCOVERED)
+        attrs.setdefault("label", node["id"])
+        attrs.setdefault("port_channels", [])
+        graph.add_node(node["id"], **attrs)
+    for link in payload.get("links", []):
+        source, target = link.get("source"), link.get("target")
+        if source not in graph or target not in graph:
+            continue
+        bundles = {
+            node: name
+            for node, name in (
+                (source, link.get("source_bundle")),
+                (target, link.get("target_bundle")),
+            )
+            if name
+        }
+        oper = {
+            node: state
+            for node, state in (
+                (source, link.get("source_oper")),
+                (target, link.get("target_oper")),
+            )
+            if state
+        }
+        graph.add_edge(
+            source,
+            target,
+            ports={source: link.get("source_port", ""), target: link.get("target_port", "")},
+            bundles=bundles,
+            sources=set(link.get("sources", [])),
+            oper=oper,
+            warnings=list(link.get("warnings", [])),
+        )
+    return graph
 
 
 #: A switch needs at least this many leaf endpoints of one class for them to fold into one badge.
@@ -234,8 +293,17 @@ class TopologyVisualizer:
         self.options = options or VisualOptions()
 
     # ------------------------------------------------------------------ render
-    def render(self, graph: nx.MultiGraph, metadata: dict[str, Any] | None = None) -> Path:
+    def render(
+        self,
+        graph: nx.MultiGraph,
+        metadata: dict[str, Any] | None = None,
+        previous: nx.MultiGraph | dict[str, Any] | None = None,
+    ) -> Path:
         """Write the HTML file and return its path.
+
+        ``previous`` is the snapshot of the run before this one (a graph, or the dict read from
+        ``previous_state.json``). With it the page gets a Current / Previous / Diff switch: what was
+        removed since is drawn too (hidden in the current view), what was added or changed is marked.
 
         Raises:
             VisualizationError: If the graph is empty or the file cannot be written.
@@ -243,14 +311,17 @@ class TopologyVisualizer:
         if graph.number_of_nodes() == 0:
             raise VisualizationError("The topology is empty; nothing to draw")
         opts = self.options
+        # What is drawn is the current topology plus, when a previous snapshot is given, what has
+        # disappeared since (flagged ``_ghost``; the page hides it in the current view).
+        drawn, diff, link_diff = self._compare(graph, previous)
         kinds = {
             node: classify_node(attrs, str(attrs.get("label") or node), opts.type_rules)
-            for node, attrs in graph.nodes(data=True)
+            for node, attrs in drawn.nodes(data=True)
         }
         # The simulation needs every device's tier even when the force-directed layout is drawn.
-        tiering = assign_tiers(graph, kinds, opts.tier_rules)
+        tiering = assign_tiers(drawn, kinds, opts.tier_rules)
         layout = tiering if opts.layout == "hierarchical" else None
-        infos = self._node_infos(graph, kinds, layout, tiering.tiers)
+        infos = self._node_infos(drawn, kinds, layout, tiering.tiers)
 
         # directed=True only so Pyvis keeps parallel edges (an undirected Network silently
         # drops a second edge between the same two nodes); the arrows are switched off per edge.
@@ -264,13 +335,19 @@ class TopologyVisualizer:
         )
         net.set_options(json.dumps(self._vis_options()))
         # A group badge goes in just before its first member, so the layout keeps it in that slot.
-        groups = _leaf_groups(graph, infos)
+        present = {
+            node: {**infos[node], "links": [p for p in infos[node]["links"] if not p.get("ghost")]}
+            for node in graph.nodes
+        }
+        groups = _leaf_groups(graph, present)
         group_at = {g["members"][0]: g for g in groups}
-        for node_id in sorted(graph.nodes):
+        for node_id in sorted(drawn.nodes):
             if _safe(node_id) in group_at:
                 self._add_group(net, group_at[_safe(node_id)], layout, infos[node_id])
             self._add_node(net, node_id, infos[node_id], layout)
-        links = self._add_edges(net, graph)
+        links = self._add_edges(net, drawn, link_diff)
+        if diff["baseline"]:
+            diff["links"] = {r["id"]: r["diff"] for r in links if r.get("diff")}
         for group in groups:
             net.add_edge(
                 group["sw"],
@@ -286,7 +363,7 @@ class TopologyVisualizer:
         page = net.generate_html(notebook=False)
         if opts.inline_resources:
             page = self._make_self_contained(page)
-        page = self._inject_page(page, graph, infos, links, layout, metadata or {}, groups)
+        page = self._inject_page(page, graph, infos, links, layout, metadata or {}, groups, diff)
         try:
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
             self.output_path.write_text(page, encoding="utf-8")
@@ -294,6 +371,106 @@ class TopologyVisualizer:
             raise VisualizationError(f"Could not write {self.output_path}: {exc}") from exc
         logger.info("Diagram written to %s", self.output_path)
         return self.output_path
+
+    # ------------------------------------------------------------- snapshot diff
+    def _entry_keys(self, graph: nx.MultiGraph) -> dict[str, dict[str, Any]]:
+        """One stable key per drawn link (a bundle, a cable, or a collapsed pair) and what it carries."""
+        keys: dict[str, dict[str, Any]] = {}
+        for (first, second), links in self._grouped(graph).items():
+            for group, is_bundle in self._entries(
+                sorted(links, key=lambda x: (x[4], x[5], x[2], x[3]))
+            ):
+                keys[self._entry_key(group, is_bundle)] = {
+                    "count": len(group),
+                    "bundle": is_bundle,
+                    "up": all(
+                        d[6].get("oper", {}).get(n, {}).get("status") != "down"
+                        for d in group
+                        for n in (first, second)
+                    ),
+                    "links": group,
+                }
+        return keys
+
+    def _entry_key(self, group: list[_Link], is_bundle: bool) -> str:
+        first, second = group[0][0], group[0][1]
+        if is_bundle:
+            return f"{first}|{second}|{group[0][4]}|{group[0][5]}"
+        if (
+            len(group) > 1
+        ):  # collapse_parallel_links: the plain cables of one pair are one drawn link
+            return f"{first}|{second}|*"
+        return f"{first}|{second}|{group[0][2]}|{group[0][3]}"
+
+    def _compare(
+        self, graph: nx.MultiGraph, previous: nx.MultiGraph | dict[str, Any] | None
+    ) -> tuple[nx.MultiGraph, dict[str, Any], dict[str, dict[str, Any]]]:
+        """``(graph to draw, diff for the page, status per link key)``.
+
+        Without ``previous`` the graph is returned as it is and the page has no snapshot switch.
+        """
+        if previous is None:
+            return graph, {"baseline": False}, {}
+        before = graph_from_snapshot(previous) if isinstance(previous, dict) else previous
+        drawn = graph.copy()
+        nodes: dict[str, dict[str, str]] = {}
+        for node, attrs in before.nodes(data=True):
+            if node not in graph:
+                drawn.add_node(node, **{**attrs, "_ghost": True})
+                nodes[_safe(node)] = {"status": "removed", "detail": "no longer in the topology"}
+        for node, attrs in graph.nodes(data=True):
+            if node not in before:
+                nodes[_safe(node)] = {"status": "added", "detail": "new since the previous run"}
+            elif before.nodes[node].get("status") != attrs.get("status"):
+                nodes[_safe(node)] = {
+                    "status": "changed",
+                    "detail": f"{before.nodes[node].get('status')} \u2192 {attrs.get('status')}",
+                }
+        now, was = self._entry_keys(graph), self._entry_keys(before)
+        links: dict[str, dict[str, Any]] = {}
+        for key, entry in now.items():
+            if key not in was:
+                links[key] = {
+                    "status": "added",
+                    "detail": f"{entry['count']} link(s), new since the previous run",
+                }
+            elif entry["bundle"] and entry["count"] != was[key]["count"]:
+                links[key] = {
+                    "status": "changed",
+                    "detail": f"port-channel members {was[key]['count']} \u2192 {entry['count']}",
+                }
+            elif entry["bundle"] is False and entry["count"] != was[key]["count"]:
+                links[key] = {
+                    "status": "changed",
+                    "detail": f"parallel links {was[key]['count']} \u2192 {entry['count']}",
+                }
+            elif entry["up"] != was[key]["up"]:
+                links[key] = {
+                    "status": "changed",
+                    "detail": "a port reports down" if not entry["up"] else "ports are up again",
+                }
+        for key, entry in was.items():
+            if key in now:
+                continue
+            links[key] = {"status": "removed", "detail": f"{entry['count']} link(s) gone"}
+            for u, v, _a, _b, _ba, _bb, data in entry["links"]:
+                drawn.add_edge(u, v, **{**data, "_ghost": True})
+        saved = (previous.get("metadata", {}) if isinstance(previous, dict) else {}).get(
+            "saved_at", ""
+        )
+        summary = {
+            "nodes_added": sum(1 for n in nodes.values() if n["status"] == "added"),
+            "nodes_removed": sum(1 for n in nodes.values() if n["status"] == "removed"),
+            "nodes_changed": sum(1 for n in nodes.values() if n["status"] == "changed"),
+            "links_added": sum(1 for n in links.values() if n["status"] == "added"),
+            "links_removed": sum(1 for n in links.values() if n["status"] == "removed"),
+            "links_changed": sum(1 for n in links.values() if n["status"] == "changed"),
+        }
+        return (
+            drawn,
+            {"baseline": True, "saved_at": _safe(saved), "nodes": nodes, "summary": summary},
+            links,
+        )
 
     # ------------------------------------------------------------------- nodes
     def _node_infos(
@@ -318,6 +495,7 @@ class TopologyVisualizer:
             for _u, other, data in graph.edges(node_id, data=True):
                 peers.append(
                     {
+                        **({"ghost": True} if data.get("_ghost") else {}),
                         "peer": _safe(other),
                         "peer_label": _safe(graph.nodes[other]["label"] or other),
                         "local": _safe(data["ports"].get(node_id, "")),
@@ -374,6 +552,7 @@ class TopologyVisualizer:
                 ],
                 "lag_note": _safe(attrs.get("lag_note")),
                 "links": peers,
+                **({"ghost": True} if attrs.get("_ghost") else {}),
             }
         return infos
 
@@ -391,6 +570,7 @@ class TopologyVisualizer:
             image=icon_uri(info["kind"], _FILL[info["status"]], info["seed"]),
             size=26 if info["seed"] else 22,
             shapeProperties={"useBorderWithImage": False},
+            **({"hidden": True} if info.get("ghost") else {}),
             **extra,
         )
 
@@ -460,13 +640,9 @@ class TopologyVisualizer:
         return _safe("\n".join(lines))
 
     # ------------------------------------------------------------------- edges
-    def _add_edges(self, net: Network, graph: nx.MultiGraph) -> list[dict[str, Any]]:
-        """Add the vis edges and return one record per edge for the page script.
-
-        Links that are members of the same port-channel become one thicker edge labelled
-        with the bundle; other links get one edge each (or one per device pair with
-        ``collapse_parallel_links``). Parallel edges are bowed apart symmetrically.
-        """
+    @staticmethod
+    def _grouped(graph: nx.MultiGraph) -> dict[tuple[str, str], list[_Link]]:
+        """The links of every device pair, as ``(first, second, port, port, bundle, bundle, data)``."""
         grouped: dict[tuple[str, str], list[_Link]] = defaultdict(list)
         for u, v, data in graph.edges(data=True):
             first, second = sorted((u, v))
@@ -482,6 +658,18 @@ class TopologyVisualizer:
                     data,
                 )
             )
+        return grouped
+
+    def _add_edges(
+        self, net: Network, graph: nx.MultiGraph, link_diff: dict[str, dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        """Add the vis edges and return one record per edge for the page script.
+
+        Links that are members of the same port-channel become one thicker edge labelled
+        with the bundle; other links get one edge each (or one per device pair with
+        ``collapse_parallel_links``). Parallel edges are bowed apart symmetrically.
+        """
+        grouped = self._grouped(graph)
         member_states = self._member_states(graph)
 
         records: list[dict[str, Any]] = []
@@ -498,7 +686,9 @@ class TopologyVisualizer:
                         "type": "curvedCW" if offset > 0 else "curvedCCW",
                         "roundness": round(min(abs(offset) * 0.3, 0.6), 2),
                     }
-                records.append(self._emit(net, graph, group, is_bundle, smooth, member_states))
+                records.append(
+                    self._emit(net, graph, group, is_bundle, smooth, member_states, link_diff or {})
+                )
         return records
 
     def _entries(self, links: list[_Link]) -> list[tuple[list[_Link], bool]]:
@@ -568,6 +758,7 @@ class TopologyVisualizer:
         is_bundle: bool,
         smooth: dict[str, Any] | bool,
         member_states: dict[str, dict[str, str]],
+        link_diff: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         first, second = group[0][0], group[0][1]
         label_a, label_b = (_safe(graph.nodes[n]["label"] or n) for n in (first, second))
@@ -655,7 +846,11 @@ class TopologyVisualizer:
         lines.extend(f"WARNING ({w['severity']}): {w['text']}" for w in warnings)
 
         edge_id = f"e{len(net.edges)}"
+        ghost = all(link[6].get("_ghost") for link in group)
+        diff = (link_diff or {}).get(self._entry_key(group, is_bundle))
         options: dict[str, Any] = {}
+        if ghost:
+            options["hidden"] = True  # gone since the previous run: the page shows it in that view
         if cdp_only:
             options["dashes"] = [9, 6]
         if severity:
@@ -702,6 +897,8 @@ class TopologyVisualizer:
             "warnings": warnings,
             "checked": any(link[6].get("oper") for link in group),
             "label": label,
+            **({"ghost": True} if ghost else {}),
+            **({"diff": diff} if diff else {}),
         }
 
     @staticmethod
@@ -792,6 +989,8 @@ class TopologyVisualizer:
         layout: TierLayout | None,
         blind_spots: list[dict[str, Any]] | None = None,
         groups: list[dict[str, Any]] | None = None,
+        diff: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Everything the page script needs, as plain JSON data."""
         problems = [
@@ -804,7 +1003,7 @@ class TopologyVisualizer:
                 "hint": info["hint"],
             }
             for node_id, info in sorted(infos.items())
-            if info["status"] == STATUS_FAILED
+            if info["status"] == STATUS_FAILED and not info.get("ghost")
         ]
         tiers = []
         if layout is not None:
@@ -832,7 +1031,10 @@ class TopologyVisualizer:
                         "warnings",
                         "checked",
                         "label",
+                        "ghost",
+                        "diff",
                     )
+                    if k in r
                 }
                 for r in links
             },
@@ -859,6 +1061,8 @@ class TopologyVisualizer:
                 {k: (_safe(v) if isinstance(v, str) else v) for k, v in spot.items()}
                 for spot in (blind_spots or [])
             ],
+            "diff": diff or {"baseline": False},
+            "meta": meta or {},
         }
 
     def _inject_page(
@@ -870,10 +1074,17 @@ class TopologyVisualizer:
         layout: TierLayout | None,
         metadata: dict[str, Any],
         groups: list[dict[str, Any]] | None = None,
+        diff: dict[str, Any] | None = None,
     ) -> str:
         counts = {STATUS_CRAWLED: 0, STATUS_FAILED: 0, STATUS_DISCOVERED: 0}
         for info in infos.values():
-            counts[info["status"]] += 1
+            if not info.get("ghost"):
+                counts[info["status"]] += 1
+        all_links, links = (
+            links,
+            [r for r in links if not r.get("ghost")],
+        )  # legend figures count what is there now
+        shown = {node: info for node, info in infos.items() if not info.get("ghost")}
         seed = html.escape(str(metadata.get("seed") or ""))
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         intro = f"Seed {seed} · " if seed else ""
@@ -891,7 +1102,7 @@ class TopologyVisualizer:
             return f'<span class="ln {css}" style="border-top-color:{color}"></span>'
 
         def count_of(kind: str) -> int:
-            return sum(1 for info in infos.values() if info["kind"] == kind)
+            return sum(1 for info in shown.values() if info["kind"] == kind)
 
         status_rows = "".join(
             [
@@ -910,7 +1121,7 @@ class TopologyVisualizer:
                 f'<img class="ico" alt="" src="{icon_uri(kind, "#52606d")}">'
                 f"{html.escape(kind)} ({count_of(kind)})",
             )
-            for kind in sorted({info["kind"] for info in infos.values()})
+            for kind in sorted({info["kind"] for info in shown.values()})
         )
         tier_rows = (
             "".join(
@@ -951,13 +1162,51 @@ class TopologyVisualizer:
         else:
             warn_note = "No interface speed/duplex data, so links were not checked."
 
+        status_pills = "".join(
+            [
+                f'<span class="pill up">\u25cf {counts[STATUS_CRAWLED]} UP</span>',
+                f'<span class="pill warn">\u25b2 {degraded + mismatch} DEGRADED</span>'
+                if degraded + mismatch
+                else "",
+                f'<span class="pill down">\u2716 {counts[STATUS_FAILED]} DOWN</span>'
+                if counts[STATUS_FAILED]
+                else "",
+                f'<span class="pill info">{counts[STATUS_DISCOVERED]} NEIGHBOR ONLY</span>'
+                if counts[STATUS_DISCOVERED]
+                else "",
+            ]
+        )
         markup = f"""
-<style>{PAGE_CSS}{SIM_CSS}</style>
-<div id="lldp-toolbar" role="toolbar" aria-label="Failure simulation and grouping">
+<style>{PAGE_CSS}{SIM_CSS}{OPS_CSS}</style>
+<header id="top" role="banner">
+<span id="brand"><svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 6v8M16 14l-8 9M16 14l8 9"/></g><g fill="currentColor"><circle cx="16" cy="6" r="3.2"/><circle cx="16" cy="14" r="2.6"/><circle cx="8" cy="23" r="3.2"/><circle cx="24" cy="23" r="3.2"/></g></svg><span class="brand-title">LLDP TOPOLOGY EXPLORER</span></span>
+<span class="top-gap"></span>
+<div id="top-search"><input id="q" type="search" placeholder="Search device, IP, port&hellip;  ( / )" autocomplete="off"
+aria-label="Search devices" aria-controls="search-results"><div id="search-results" role="listbox" aria-label="Search results" hidden></div></div>
+<button type="button" id="b-search" title="Search ( / )">Search</button>
+<button type="button" id="b-filter" aria-expanded="false" aria-controls="lldp-toolbar" title="Grouping and focus mode">Filter</button>
+<button type="button" id="b-sim" aria-pressed="false" title="Simulate a failure or a maintenance drain ( S )">Simulate</button>
+<button type="button" id="b-side" aria-pressed="true" title="Show or hide the sidebar">Panel</button>
+<button type="button" id="b-theme" title="Light / dark theme">Theme</button>
+<button type="button" id="b-full" title="Full screen">Full</button>
+<button type="button" id="b-more" aria-expanded="false" aria-controls="p-more" title="Export">Export</button>
+</header>
+<div id="p-more" role="menu" aria-label="Export" hidden>
+<h3>Documentation</h3>
+<button type="button" id="m-docs" role="menuitem" title="Downloads a clean vector SVG and TOPOLOGY_SPEC.md">Export Documentation Bundle</button>
+<p>Clean SVG (light, no UI, any resolution) + <b>TOPOLOGY_SPEC.md</b>: the device table and the link matrix.</p>
+<button type="button" id="m-docsvg" role="menuitem">Clean SVG only</button>
+<button type="button" id="m-docmd" role="menuitem">TOPOLOGY_SPEC.md only</button>
+</div>
+<div id="lldp-toolbar" class="panel" role="toolbar" aria-label="Failure simulation and grouping" hidden>
 <button type="button" id="lldp-sim-toggle" aria-pressed="false"
 title="Click a device or a link to see what loses its path to the Core">Simulate</button>
 <label id="lldp-group-label" title="Collapse many phones, access points and hosts on one switch into one badge">
 <input type="checkbox" id="lldp-group-toggle" checked> Group endpoints</label>
+<label id="lldp-ego-label" title="Hover or select a device: light its neighbours up to two hops away and dim the rest to 15%">
+<input type="checkbox" id="f-ego" checked> Focus mode (2-hop neighbourhood)</label>
+<label id="lldp-ifaces-label" title="Interface names normally show above zoom 1.20 and on the links of the selected or hovered device">
+<input type="checkbox" id="f-ifaces"> Always show interface names</label>
 </div>
 <div id="lldp-sim-banner" role="status" hidden>
 <div class="sb-row"><span class="sb-tag">[SIMULATION ACTIVE]</span>
@@ -967,31 +1216,51 @@ title="Click a device or a link to see what loses its path to the Core">Simulate
 <div id="lldp-sim-lines"></div>
 </div>
 <div id="lldp-sim-pop" role="dialog" aria-label="Simulate a failure" hidden></div>
+<aside id="side" aria-label="Sidebar">
+<div id="metrics" class="metrics"><div class="metric"><b class="num">{graph.number_of_nodes()}</b><span>Devices</span></div>
+<div class="metric"><b class="num">{graph.number_of_edges()}</b><span>Cables</span></div>
+<div class="metric"><b class="num">{len(links)}</b><span>Links</span></div>
+<div class="metric"><b class="num">{len(layout.rows) if layout else "-"}</b><span>Tiers</span></div></div>
+<div id="mpills" class="mrow">{status_pills}</div>
+<div id="insp-empty" class="empty">Click any device or cable to inspect port status, metrics, and neighbor adjacencies, or press <kbd>/</kbd> to search.</div>
 <div id="lldp-legend" role="note" aria-label="Legend">
 <div class="lg-head"><h1>LLDP topology</h1>
 <button type="button" id="lldp-legend-toggle" aria-expanded="true" aria-controls="lldp-legend-body"
 title="Collapse or expand the legend">&#8211;</button></div>
 <div id="lldp-legend-body">
-<p>{intro}{graph.number_of_nodes()} devices, {graph.number_of_edges()} links · {stamp}</p>
-<h2>Devices</h2><ul>{status_rows}</ul>
-<h2>Types</h2><ul class="cols">{kind_rows}</ul>
-{f'<h2>Hierarchy rows</h2><ul class="cols">{tier_rows}</ul>' if tier_rows else ""}
-<h2>Links</h2><ul class="cols">{link_rows}</ul>
-<p class="hint">Colour: speed in use where a device reports it, otherwise the port type.</p>
-<h2>Link checks</h2><ul>{warn_rows}</ul><p class="hint">{warn_note}</p>
-<div id="lldp-warnings"></div>
+<p>{intro}{graph.number_of_nodes()} devices, {graph.number_of_edges()} links &middot; {stamp}</p>
+<details class="group" open><summary>Devices</summary><ul>{status_rows}</ul></details>
+<details class="group" open><summary>Types</summary><ul class="cols">{kind_rows}</ul></details>
+{f'<details class="group" open><summary>Hierarchy rows</summary><ul class="cols">{tier_rows}</ul></details>' if tier_rows else ""}
+<details class="group" open><summary>Links</summary><ul class="cols">{link_rows}</ul>
+<p class="hint">Colour: speed in use where a device reports it, otherwise the port type.</p></details>
+<details class="group" open><summary>Link checks</summary><ul>{warn_rows}</ul><p class="hint">{warn_note}</p>
+<div id="lldp-warnings"></div></details>
 <div id="lldp-problems"></div>
 <div id="lldp-blindspots"></div>
 <p class="hint">Click a legend item to highlight it, click again to clear. Click a device or a link for details.
-Text under a name: management IP · OS. Text along a link: the interface at that end (or the port-channel).</p>
+Text under a name: management IP &middot; OS. Text along a link: the interface at that end (or the port-channel).</p>
 </div>
 </div>
+</aside>
 <aside id="lldp-detail" role="complementary" aria-label="Details" hidden></aside>
-<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, links, layout, metadata.get("blind_spots"), groups))};
+<div id="diff-bar" role="group" aria-label="Snapshot time travel" hidden>
+<span class="seg" role="radiogroup" aria-label="Snapshot">
+<button type="button" id="t-current" data-time="current" role="radio" title="The network as it is now: removed items are hidden">Current State</button>
+<button type="button" id="t-previous" data-time="previous" role="radio" title="The network as it was at the previous run: new items are hidden">Previous State</button>
+<button type="button" id="t-overlay" data-time="overlay" role="radio" title="Both at once: green added, red dashed removed, orange changed">Diff Overlay</button></span>
+<span id="diff-sum"></span>
+<span class="key"><i class="k-add"></i>added<i class="k-rm"></i>removed<i class="k-ch"></i>changed</span>
+</div>
+<canvas id="minimap" width="160" height="100" aria-label="Minimap radar" title="Minimap: click or drag to move the view"></canvas>
+<div id="hotkeys"><span class="hk">[ / ]</span> Search &nbsp;&middot;&nbsp; <span class="hk">[ F ]</span> Fit &nbsp;&middot;&nbsp; <span class="hk">[ S ]</span> Simulate &nbsp;&middot;&nbsp; <span class="hk">[ Esc ]</span> Deselect</div>
+<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, all_links, layout, metadata.get("blind_spots"), groups, diff, {"seed": str(metadata.get("seed") or ""), "generated": stamp}))};
 window.LLDP_STYLE={_script_json({"bg": self.options.bgcolor, "fg": "#323f4b"})};</script>
 <script>{PAGE_JS}</script>
 <script>{SIM_ENGINE_JS}</script>
 <script>{SIM_UI_JS}</script>
+<script>{OPS_ENGINE_JS}</script>
+<script>{OPS_UI_JS}</script>
 """
         if "</body>" not in page:
             raise VisualizationError("Pyvis output has no </body>; cannot add the legend")
