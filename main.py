@@ -37,7 +37,7 @@ from src.parser import LldpParser
 from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
 from src.report import blind_spots_payload, format_blind_spots
 from src.vendors import load_custom_vendors, supported_device_types
-from src.visualizer import TopologyVisualizer, VisualOptions, load_snapshot
+from src.visualizer import TopologyVisualizer, VisualizationError, VisualOptions, load_snapshot
 
 
 def _get_base_dir() -> Path:
@@ -60,7 +60,8 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
 else:
     TEMPLATE_DIR = BASE_DIR / "templates"
 
-OUTPUT_HTML = Path("output/topology.html")
+OUTPUT_IMAGE = Path("output/topology.png")
+HTML_SUFFIXES = (".html", ".htm")
 
 EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_PARTIAL = 0, 1, 2, 3
 
@@ -139,9 +140,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument(
         "--output",
         type=Path,
-        default=OUTPUT_HTML,
+        default=None,
         metavar="PATH",
-        help="interactive diagram output path (default: %(default)s)",
+        help="diagram output path: a .html path writes the interactive page only; any other "
+        "extension (png, svg, pdf, ...) writes that picture AND the interactive page next to it, "
+        f"with the same name (default: {OUTPUT_IMAGE} + {OUTPUT_IMAGE.with_suffix('.html')})",
     )
     ap.add_argument(
         "--dry-run",
@@ -317,8 +320,9 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     poller = build_poller(args, settings, args.config, crawl_config)
     parser = LldpParser(template_dirs=[TEMPLATE_DIR])
     engine = GraphEngine(data_dir=DATA_DIR)
+    image_path, page_path = output_paths(args.output)
     visualizer = TopologyVisualizer(
-        output_path=args.output,
+        output_path=page_path,
         options=VisualOptions.from_settings(section(settings, "visualization")),
     )
     capture = RawCapture(args.save_raw) if args.save_raw else None
@@ -354,8 +358,24 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
         engine.save(metadata)  # 4. Snapshot
     if args.save_raw:
         logger.info("Raw CLI output saved to %s", args.save_raw)
-    page = visualizer.render(engine.graph, metadata, previous=previous)  # 5. Visualize
-    print(f"\n Diagram   : {page}\n")
+    # 5. Visualize: the page first, so a failing picture never costs the page
+    page = visualizer.render(engine.graph, metadata, previous=previous)
+    image: Path | None = None
+    if image_path is None:
+        print(f"\n Diagram   : {page}\n")
+    else:
+        try:
+            image = visualizer.render_image(engine.graph, metadata, image_path)
+        except VisualizationError as exc:
+            if args.output is not None:  # the picture was asked for by name: that is an error
+                print(f"\n Explorer  : {page}")
+                raise
+            # The default run still has its page; a machine without Graphviz is told how to get
+            # the picture.
+            logger.warning("No picture written: %s", exc)
+            print(f"\n Diagram   : not written - {exc}\n Explorer  : {page}\n")
+        else:
+            print(f"\n Diagram   : {image}\n Explorer  : {page}\n")
 
     if notifier is None:
         try:
@@ -365,6 +385,7 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             notifier = None
 
     if notifier:
+        attachment = str(image) if image and image.is_file() else None
         if result.partial:
             summary = (
                 f"Crawl completed with issues: {len(result.failures)} failure(s), "
@@ -381,6 +402,7 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
                 title="Topology Crawl Incomplete / Warnings",
                 message=summary,
                 level="warning",
+                attachment_path=attachment,
                 metadata={
                     "target": seed.host,
                     "hint": "Check device credentials, reachability or subnet scope.",
@@ -394,6 +416,7 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
                     f"{engine.graph.number_of_edges()} links mapped in {result.duration:.1f}s."
                 ),
                 level="info",
+                attachment_path=attachment,
                 metadata={
                     "target": seed.host,
                     "hint": "Topology diagram and snapshot updated.",
@@ -401,6 +424,19 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             )
 
     return EXIT_PARTIAL if result.partial else EXIT_OK
+
+
+def output_paths(output: Path | None) -> tuple[Path | None, Path]:
+    """``(picture, interactive page)`` for ``--output``.
+
+    Nothing given: ``output/topology.png`` and ``output/topology.html``. A ``.html`` path: the page
+    only. Any other extension: that picture, and the page next to it under the same name.
+    """
+    if output is None:
+        return OUTPUT_IMAGE, OUTPUT_IMAGE.with_suffix(".html")
+    if output.suffix.lower() in HTML_SUFFIXES:
+        return None, output
+    return output, output.with_suffix(".html")
 
 
 def main(argv: list[str] | None = None) -> int:

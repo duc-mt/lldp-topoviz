@@ -340,6 +340,32 @@ def test_main_partial_crawl_triggers_warning_alert(tmp_path, monkeypatch):
     assert call_kwargs["level"] == "warning"
     assert "Topology Crawl Incomplete / Warnings" in call_kwargs["title"]
     assert "Crawl completed with issues" in call_kwargs["message"]
+    assert call_kwargs["attachment_path"] is None
+
+
+def test_main_pipeline_attaches_png_image(tmp_path, monkeypatch):
+    import main as cli
+
+    mock_notifier = MagicMock()
+    monkeypatch.setattr(cli, "TelegramNotifier", lambda *a, **kw: mock_notifier)
+
+    demo_dir = cli.BASE_DIR / "samples" / "demo"
+    out_file = tmp_path / "topo.png"
+    argv = [
+        "--config",
+        str(demo_dir / "settings.yaml"),
+        "--replay",
+        str(demo_dir),
+        "--output",
+        str(out_file),
+        "--dry-run",
+    ]
+    code = cli.main(argv)
+    assert code == cli.EXIT_PARTIAL
+    assert mock_notifier.send_alert.called
+    call_kwargs = mock_notifier.send_alert.call_args[1]
+    assert call_kwargs["attachment_path"] == str(out_file)
+    assert out_file.is_file()
 
 
 def test_main_mapper_error_triggers_critical_alert(monkeypatch):

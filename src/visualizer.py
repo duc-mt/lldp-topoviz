@@ -237,6 +237,16 @@ def _leaf_groups(graph: nx.MultiGraph, infos: dict[str, dict[str, Any]]) -> list
     return groups
 
 
+class _EdgeSink:
+    """Stands in for the Pyvis network where only the drawn links matter (the still picture is made by Graphviz)."""
+
+    def __init__(self) -> None:
+        self.edges: list[dict[str, Any]] = []
+
+    def add_edge(self, source: str, to: str, **options: Any) -> None:
+        self.edges.append({"from": source, "to": to, **options})
+
+
 @dataclass(frozen=True)
 class VisualOptions:
     """Look-and-feel settings (``visualization:`` in settings.yaml)."""
@@ -371,6 +381,114 @@ class TopologyVisualizer:
             raise VisualizationError(f"Could not write {self.output_path}: {exc}") from exc
         logger.info("Diagram written to %s", self.output_path)
         return self.output_path
+
+    # ------------------------------------------------------------- still picture (PNG / SVG / PDF)
+    def build_image_graph(
+        self,
+        graph: nx.MultiGraph,
+        metadata: dict[str, Any] | None = None,
+        image_format: str = "png",
+    ) -> Any:
+        """The Graphviz graph of the topology: the explorer's tiers, speeds, port-channels and endpoint groups."""
+        from src.diagram_image import (  # Graphviz is only needed for the picture, not for the page
+            build_graph,
+        )
+
+        opts = self.options
+        kinds = {
+            node: classify_node(attrs, str(attrs.get("label") or node), opts.type_rules)
+            for node, attrs in graph.nodes(data=True)
+        }
+        tiering = assign_tiers(graph, kinds, opts.tier_rules)
+        infos = self._node_infos(graph, kinds, tiering, tiering.tiers)
+        groups = _leaf_groups(graph, infos)
+        sink = _EdgeSink()
+        records = self._add_edges(sink, graph)
+        links = [
+            {
+                "from": record["from"],
+                "to": record["to"],
+                "color": record["color"],
+                "width": edge["width"],
+                "dashed": bool(edge.get("dashes")),
+                "label": record["label"],
+                "fromPorts": record["fromPorts"],
+                "toPorts": record["toPorts"],
+                "warn": record["warn"],
+                "speed_style": record["speed_style"],
+            }
+            for record, edge in zip(records, sink.edges, strict=True)
+        ]
+        seed = str((metadata or {}).get("seed") or "")
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return build_graph(
+            infos={_safe(node): info for node, info in infos.items()},
+            links=links,
+            groups=groups,
+            tier_names={info["rank"]: info["tier"] for info in infos.values()},
+            title="LLDP topology",
+            subtitle=(f"Seed {seed} · " if seed else "")
+            + f"{graph.number_of_nodes()} devices, {graph.number_of_edges()} cables · {stamp}",
+            palette={
+                STATUS_CRAWLED: COLOR_CRAWLED,
+                STATUS_FAILED: COLOR_FAILED,
+                STATUS_DISCOVERED: COLOR_DISCOVERED,
+                "seed": COLOR_SEED_BORDER,
+                **_WARN_COLORS,
+            },
+            port_labels=opts.port_labels,
+            image_format=image_format,
+        )
+
+    def render_image(
+        self,
+        graph: nx.MultiGraph,
+        metadata: dict[str, Any] | None = None,
+        path: str | os.PathLike = "output/topology.png",
+    ) -> Path:
+        """Write the topology as a picture (the file extension sets the format: png, svg, pdf, ...).
+
+        Raises:
+            VisualizationError: On an unknown format, a missing ``graphviz`` package or ``dot`` program, or a
+                failed run of ``dot`` (the DOT source is kept next to the picture then).
+        """
+        out = Path(path)
+        try:
+            import graphviz
+        except ImportError as exc:
+            raise VisualizationError(
+                "The 'graphviz' Python package is not installed (pip install graphviz; the Graphviz program "
+                "'dot' is needed as well: apt install graphviz / brew install graphviz)"
+            ) from exc
+        fmt = out.suffix.lstrip(".").lower()
+        if fmt not in graphviz.FORMATS:
+            raise VisualizationError(
+                f"Cannot draw a '.{fmt}' picture: use png, svg, pdf, ... (a .html path writes the interactive page only)"
+            )
+        dot = self.build_image_graph(graph, metadata, fmt)
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            rendered = dot.render(filename=out.stem, directory=str(out.parent), cleanup=True)
+        except graphviz.ExecutableNotFound as exc:
+            raise VisualizationError(
+                "The Graphviz 'dot' program was not found (install the system package: apt install graphviz / "
+                f"brew install graphviz). The DOT source is saved to {self._save_dot_source(dot, out)}"
+            ) from exc
+        except (graphviz.CalledProcessError, OSError) as exc:
+            raise VisualizationError(
+                f"Graphviz could not draw the picture ({exc}). The DOT source is saved to {self._save_dot_source(dot, out)}"
+            ) from exc
+        logger.info("Rendered topology picture to %s", rendered)
+        return Path(rendered)
+
+    @staticmethod
+    def _save_dot_source(dot: Any, out: Path) -> Path:
+        path = out.with_suffix(".gv")
+        try:
+            path.write_text(dot.source, encoding="utf-8")
+        except OSError:
+            logger.warning("Could not save the DOT source to %s", path)
+        return path
 
     # ------------------------------------------------------------- snapshot diff
     def _entry_keys(self, graph: nx.MultiGraph) -> dict[str, dict[str, Any]]:

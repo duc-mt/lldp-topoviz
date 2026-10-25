@@ -4,8 +4,9 @@ Crawl a network over LLDP and CDP from one seed device and draw it as an interac
 
 The tool SSHes into the seed, runs the platform's `show lldp neighbors detail` equivalent, parses it with
 Netmiko's built-in TextFSM support (`use_textfsm=True`), queues every neighbor it is allowed to log in to,
-and repeats until the network is mapped. The result is a NetworkX graph, a JSON snapshot and a single
-self-contained HTML file (Pyvis / vis-network) that opens offline.
+and repeats until the network is mapped. The result is a NetworkX graph, a JSON snapshot a single
+self-contained HTML file (Pyvis / vis-network) that opens offline, and a PNG picture of the same topology
+(Graphviz) for reports and tickets.
 
 Structure, CLI, logging, error handling and config management deliberately mirror `ospf-lsdb-monitor`.
 
@@ -76,7 +77,8 @@ The easiest way to run is via the universal launcher script (`./run` on Linux/ma
 ./run --config samples/juniper_junos/settings.yaml --replay samples/juniper_junos
 ./run --config samples/hp_procurve/settings.yaml --replay samples/hp_procurve
 
-open output/topology.html          # or xdg-open / start
+open output/topology.html          # the interactive page (or xdg-open / start)
+open output/topology.png           # the same topology as a still picture
 
 # Real network:
 export LLDP_MAPPER_USERNAME=admin
@@ -105,6 +107,7 @@ seed -> Crawler queue -> DevicePoller (Netmiko, use_textfsm=True) -> LldpParser 
                                               GraphEngine (NetworkX MultiGraph)
                                                         |
                                        data/current_state.json  +  Pyvis -> output/topology.html
+                                                          +  Graphviz -> output/topology.png
 ```
 
 | File | Role |
@@ -120,7 +123,8 @@ seed -> Crawler queue -> DevicePoller (Netmiko, use_textfsm=True) -> LldpParser 
 | `src/graph_engine.py` | Device identity, link de-duplication, status, JSON snapshot |
 | `src/enrichment.py` | Device type, OS label, tiers, nominal link speed, failure wording (pure functions) |
 | `src/icons.py` | Inline SVG icons per device type |
-| `src/visualizer.py` | Pyvis HTML: icons, hierarchy, bundles, legend, tooltips |
+| `src/visualizer.py` | Pyvis HTML: icons, hierarchy, bundles, legend, tooltips; `render_image` for the picture |
+| `src/diagram_image.py` | The Graphviz picture (PNG / SVG / PDF): tiers, speeds, port-channels, findings, endpoint groups |
 | `src/diagram_assets.py` | The CSS and JavaScript injected into the page (labels, panels) |
 | `templates/` | Your own TextFSM templates (see "Adding a platform") |
 | `samples/demo/` | Replayable captures for the demo and the tests |
@@ -152,6 +156,20 @@ interfaces with what each end runs at (`1G full`), the warnings, which protocols
 protocol and members. The **Warnings** and **Problems** lists in the legend jump to each link or failed device.
 The legend collapses with its `-` button; click one of its items to highlight what it describes and click again to
 clear. `Esc` or a click on empty space closes the panel.
+
+#### The picture (PNG)
+
+Every run also writes `output/topology.png`: the same topology as a still picture, drawn by Graphviz for a report,
+a ticket or a wiki. Core is on top with one labelled row per tier; devices are coloured by crawl status (the seed
+has a gold ring); links keep their speed colour and thickness, port-channels read `LACP x2`, a link with a finding
+carries `▲ degraded` / `▲ mismatch`, interface names sit at both ends, and phones, access points and hosts fold
+into one badge per switch like on the page. `--output topology.svg` or `.pdf` gives those formats instead.
+
+Graphviz is a **system program** (`apt install graphviz`, `brew install graphviz`) besides the `graphviz` Python
+package. Without it a default run still writes the interactive page and says how to get the picture (the DOT source is
+kept as `topology.gv`); asking for a picture by name with `--output` makes the missing program an error. The
+standalone executables cannot carry Graphviz: on a machine without it they write the page only. The picture shows the
+current topology; the snapshot comparison is a feature of the page.
 
 #### Explorer shell and operations features
 
@@ -210,7 +228,7 @@ Every inference can be overridden in `visualization:` in `settings.yaml`.
 | `--no-port-channels` | Do not read port-channels (saves one command per device; links are not bundled) |
 | `--replay DIR` | Read saved CLI output instead of using SSH |
 | `--save-raw DIR` | Also store each device's raw CLI output (one extra command per device) |
-| `--output PATH` | Diagram path (default `output/topology.html`) |
+| `--output PATH` | Where the diagram goes. Default: `output/topology.png` **and** `output/topology.html`. A `.html` path writes the interactive page only; any other extension (`png`, `svg`, `pdf`, ...) writes that picture and the page next to it under the same name |
 | `--dry-run` | Crawl and draw, but do not write `data/current_state.json` |
 | `-v` | Debug logging |
 

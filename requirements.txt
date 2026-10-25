@@ -3,5 +3,6 @@ netmiko>=4.3,<5        # SSH transport + use_textfsm integration
 ntc-templates>=7.0     # TextFSM templates (Netmiko pulls it in; pinned for the template names)
 networkx>=3.0          # topology graph
 pyvis>=0.3.2           # interactive HTML diagram
+graphviz>=0.20         # PNG / SVG / PDF picture (needs the Graphviz program too: apt install graphviz / brew install graphviz)
 PyYAML>=6.0            # settings + replay index
 textfsm>=1.1           # TextFSM, run directly to tell "no records" from a template mismatch

@@ -5,6 +5,7 @@ bcrypt==5.0.0
 cffi==2.1.1
 cryptography==50.0.2
 executing==2.3.0
+graphviz==0.21
 invoke==3.0.3
 ipython==9.17.1
 ipython_pygments_lexers==1.1.1
