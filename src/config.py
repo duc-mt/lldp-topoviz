@@ -2,7 +2,8 @@
 ==============================================================================
 Module Name:   config.py
 Description:   Settings loading and validation: YAML file, environment-variable
-               credential overrides, seed device and SSH connection settings.
+               credential overrides, seed device(s), SSH connection settings, the
+               embedded web server and the crawl history.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-10
 Version:       1.0.0
@@ -16,6 +17,7 @@ Notes:         Requires Python 3.10+
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,12 @@ ENV_OVERRIDES = {
     "password": "LLDP_MAPPER_PASSWORD",
     "secret": "LLDP_MAPPER_SECRET",
 }
+
+#: Environment variables of the embedded web server (``--serve``).
+ENV_WEB_PORT = "LLDP_MONITOR_PORT"
+ENV_WEB_BIND = "LLDP_MONITOR_BIND"
+DEFAULT_WEB_PORT = 8080
+DEFAULT_WEB_BIND = "127.0.0.1"  # the crawl trigger uses your device credentials: local by default
 
 
 class ConfigError(MapperError):
@@ -91,9 +99,27 @@ def as_int(value: Any, name: str, minimum: int = 0) -> int:
     return number
 
 
+def parse_seed_list(value: str | Iterable[Any] | None) -> list[str]:
+    """Split ``"a, b,c"`` (or a list of such strings) into seed hosts.
+
+    Whitespace around each entry is dropped, empty entries are ignored, and a host given twice
+    (compared case-insensitively) is kept once, in the order it first appeared.
+    """
+    if value is None:
+        return []
+    items = [value] if isinstance(value, str) else list(value)
+    hosts: dict[str, str] = {}
+    for item in items:
+        for piece in str(item).split(","):
+            host = piece.strip()
+            if host:
+                hosts.setdefault(host.lower(), host)
+    return list(hosts.values())
+
+
 @dataclass(frozen=True)
 class SeedSettings:
-    """Where the crawl starts."""
+    """Where the crawl starts: one seed device (a crawl may have several, see ``collect``)."""
 
     host: str
     device_type: str = "cisco_ios"
@@ -116,6 +142,40 @@ class SeedSettings:
             raise ConfigError("No seed device: set seed.host in the settings file or pass --seed")
         resolved_type = str(device_type or seed.get("device_type") or "cisco_ios").strip()
         return cls(host=resolved_host, device_type=resolved_type)
+
+    @classmethod
+    def collect(
+        cls,
+        settings: dict[str, Any],
+        hosts: str | Iterable[str] | None = None,
+        host: str | None = None,
+        device_type: str | None = None,
+    ) -> list[SeedSettings]:
+        """Every seed of the crawl, in crawl order (all share one device type).
+
+        ``hosts`` (CLI ``--seeds``, comma separated) wins over everything: ``--seed`` is ignored
+        when both are given. Otherwise ``host`` (CLI ``--seed``) alone is the seed. With neither,
+        the seeds come from the settings file: ``seed.host`` first, then ``crawl.seeds``.
+
+        Raises:
+            ConfigError: If no seed is configured anywhere, or ``crawl.seeds`` is not a list.
+        """
+        seed = section(settings, "seed")
+        resolved_type = str(device_type or seed.get("device_type") or "cisco_ios").strip()
+        names = parse_seed_list(hosts)
+        if not names and host and str(host).strip():
+            names = [str(host).strip()]
+        if not names:
+            listed = section(settings, "crawl").get("seeds")
+            if listed is not None and not isinstance(listed, (list, tuple)):
+                raise ConfigError("crawl.seeds in the settings file must be a list of hosts")
+            names = parse_seed_list([seed.get("host") or ""] + list(listed or []))
+        if not names:
+            raise ConfigError(
+                "No seed device: set seed.host (or crawl.seeds) in the settings file "
+                "or pass --seed / --seeds"
+            )
+        return [cls(host=name, device_type=resolved_type) for name in names]
 
 
 @dataclass(frozen=True)
@@ -267,4 +327,60 @@ class TelegramSettings:
             silent=silent,
             send_image=send_image,
             proxy_url=proxy_url,
+        )
+
+
+@dataclass(frozen=True)
+class WebSettings:
+    """The embedded web server of ``--serve`` (``web:`` in settings.yaml)."""
+
+    port: int = DEFAULT_WEB_PORT
+    bind: str = DEFAULT_WEB_BIND
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: dict[str, Any],
+        port: int | None = None,
+        bind: str | None = None,
+    ) -> WebSettings:
+        """Port: ``--port``, else ``LLDP_MONITOR_PORT``, else ``web.port``, else 8080.
+
+        The bind address follows the same order (``--bind``, ``LLDP_MONITOR_BIND``,
+        ``web.bind``, 127.0.0.1).
+
+        Raises:
+            ConfigError: If the port is not an integer between 1 and 65535.
+        """
+        web = section(settings, "web")
+        raw_port: Any = port
+        if raw_port is None:
+            raw_port = os.environ.get(ENV_WEB_PORT) or web.get("port", DEFAULT_WEB_PORT)
+        number = as_int(raw_port, "web.port", 1)
+        if number > 65535:
+            raise ConfigError(f"web.port must be <= 65535 (got {number})")
+        address = str(
+            bind or os.environ.get(ENV_WEB_BIND) or web.get("bind") or DEFAULT_WEB_BIND
+        ).strip()
+        return cls(port=number, bind=address or DEFAULT_WEB_BIND)
+
+
+@dataclass(frozen=True)
+class HistorySettings:
+    """How many crawls the history store keeps (``history:`` in settings.yaml)."""
+
+    enabled: bool = True
+    max_runs: int = 500  # the oldest runs are dropped first; 0 = keep everything
+
+    @classmethod
+    def from_settings(cls, settings: dict[str, Any]) -> HistorySettings:
+        """Build from the ``history`` mapping.
+
+        Raises:
+            ConfigError: If ``max_runs`` is not a non-negative integer.
+        """
+        history = section(settings, "history")
+        return cls(
+            enabled=bool(history.get("enabled", True)),
+            max_runs=as_int(history.get("max_runs", 500), "history.max_runs", 0),
         )

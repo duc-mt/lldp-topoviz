@@ -16,7 +16,9 @@ Notes:         Requires Python 3.10+
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
+from pathlib import Path
 
 __version__ = "1.0.0"
 
@@ -68,6 +70,27 @@ _IFACE_ALIASES = {
     "vl": "Vl",
 }
 _IFACE_RE = re.compile(r"^([A-Za-z][A-Za-z\-]*?)\s*(\d[\w/.:\-]*)$")
+
+
+def atomic_write_text(path: str | os.PathLike, text: str) -> Path:
+    """Write ``text`` (UTF-8) to ``path`` through a ``.tmp`` file and an atomic rename.
+
+    A reader (the web server, a browser reload) therefore sees the old file or the new one,
+    never a half-written one. The temporary file is removed if anything fails.
+
+    Raises:
+        OSError: If the directory or the file cannot be written.
+    """
+    target = Path(path)
+    tmp = target.with_name(target.name + ".tmp")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def is_ipv4(text: object) -> bool:

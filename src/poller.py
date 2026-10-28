@@ -120,6 +120,10 @@ class RawLldp:
     status_rows: list[dict[str, Any]] | None = None
     status_text: str = ""
     status_note: str = ""
+    # VLAN setup of the ports: mode, access / native VLAN, trunk allowed VLANs (optional command).
+    vlan_rows: list[dict[str, Any]] | None = None
+    vlan_text: str = ""
+    vlan_note: str = ""
 
 
 class BasePoller(ABC):
@@ -141,6 +145,7 @@ class DevicePoller(BasePoller):
         collect_lag: bool = True,
         protocols: Sequence[str] = ("lldp",),
         collect_status: bool = True,
+        collect_vlan: bool = True,
     ) -> None:
         """
         Args:
@@ -155,6 +160,9 @@ class DevicePoller(BasePoller):
                 one works.
             collect_status: Also read each port's operating speed/duplex (one extra command)
                 so mismatched links can be flagged.
+            collect_vlan: Also read each port's VLAN setup (one extra command: switchport
+                mode, access / native VLAN, trunk allowed VLANs) so VLAN mismatches between the
+                two ends of a link can be flagged.
         """
         self.connection = connection
         self.template_dirs = [Path(d) for d in template_dirs]
@@ -162,6 +170,7 @@ class DevicePoller(BasePoller):
         self.collect_lag = collect_lag
         self.protocols = tuple(protocols)
         self.collect_status = collect_status
+        self.collect_vlan = collect_vlan
 
     def _connection_params(self, host: str, device_type: str) -> dict[str, Any]:
         c = self.connection
@@ -225,6 +234,7 @@ class DevicePoller(BasePoller):
                     raise errors[0]
                 lag_rows, lag_text, lag_note = self._collect_lag(conn, profile)
                 status_rows, status_text, status_note = self._collect_status(conn, profile)
+                vlan_rows, vlan_text, vlan_note = self._collect_vlan(conn, profile)
         except NetmikoAuthenticationException as exc:
             raise PollerError(
                 f"Authentication failed for {host}: check username, password and enable secret",
@@ -272,6 +282,9 @@ class DevicePoller(BasePoller):
             status_rows=status_rows,
             status_text=status_text,
             status_note=status_note,
+            vlan_rows=vlan_rows,
+            vlan_text=vlan_text,
+            vlan_note=vlan_note,
         )
 
     def _collect_protocol(
@@ -373,6 +386,24 @@ class DevicePoller(BasePoller):
             conn, status.command, template, status.error_markers, "Interface status"
         )
 
+    def _collect_vlan(
+        self, conn: Any, profile: VendorProfile
+    ) -> tuple[list[dict[str, Any]] | None, str, str]:
+        """Read each port's VLAN setup on the open session: ``(rows, raw text, note)``.
+
+        Never raises for a device problem; without it the device's links get no VLAN check.
+        """
+        vlan = profile.vlan
+        if not self.collect_vlan:
+            return None, "", "VLAN collection is switched off"
+        if vlan is None:
+            return None, "", f"no VLAN (switchport) command is known for {profile.key}"
+        try:
+            template = vlan.resolve_template(self.template_dirs)
+        except MapperError as exc:
+            return None, "", str(exc)
+        return self._collect_optional(conn, vlan.command, template, vlan.error_markers, "VLAN")
+
     def _run_raw(self, conn: Any, proto: ProtocolProfile, host: str) -> str:
         """Run the command without parsing and reject obvious CLI errors."""
         text = str(conn.send_command(proto.command, read_timeout=self.connection.read_timeout))
@@ -409,8 +440,9 @@ class FilePoller(BasePoller):
     """Replay previously saved CLI output (offline testing, demos, regression tests).
 
     The directory holds one ``<host>.txt`` per device (LLDP), ``<host>.<protocol>.txt`` for other
-    discovery protocols, ``<host>.lag.txt`` and ``<host>.status.txt``, and an optional
-    ``index.yaml`` that maps hosts to files and records each device's own hostname and type.
+    discovery protocols, ``<host>.lag.txt``, ``<host>.status.txt``, ``<host>.vlan.txt`` and an
+    optional ``index.yaml`` that maps hosts to files and records each device's own hostname and
+    type.
     """
 
     def __init__(
@@ -419,11 +451,13 @@ class FilePoller(BasePoller):
         collect_lag: bool = True,
         protocols: Sequence[str] = ("lldp", "cdp"),
         collect_status: bool = True,
+        collect_vlan: bool = True,
     ) -> None:
         self.directory = Path(directory)
         self.collect_lag = collect_lag
         self.protocols = tuple(protocols)
         self.collect_status = collect_status
+        self.collect_vlan = collect_vlan
         self._index = load_index(self.directory)
 
     def _read(self, path: Path) -> str:
@@ -479,6 +513,7 @@ class FilePoller(BasePoller):
         status_text, status_note = self._optional(
             entry, host, "status", self.collect_status, "interface status"
         )
+        vlan_text, vlan_note = self._optional(entry, host, "vlan", self.collect_vlan, "VLAN")
         return RawLldp(
             host=host,
             device_type=resolved_type,
@@ -492,6 +527,8 @@ class FilePoller(BasePoller):
             lag_note=lag_note,
             status_text=status_text,
             status_note=status_note,
+            vlan_text=vlan_text,
+            vlan_note=vlan_note,
         )
 
     def _optional(
@@ -531,6 +568,8 @@ class RawCapture:
             pieces["lag_file"] = raw.lag_text
         if raw.status_text:
             pieces["status_file"] = raw.status_text
+        if raw.vlan_text:
+            pieces["vlan_file"] = raw.vlan_text
         if not pieces:
             logger.debug("No raw text for %s; nothing to capture", raw.host)
             return

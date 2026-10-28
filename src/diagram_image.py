@@ -58,6 +58,7 @@ def _legend(
     speeds: list[tuple[str, str]],
     palette: dict[str, str],
     link_findings: bool,
+    vlan_findings: bool = False,
 ) -> str:
     """One line under the title: what the colours of the devices and of the links mean."""
 
@@ -74,6 +75,8 @@ def _legend(
     if link_findings:
         items.append(swatch(palette["degraded"], "\u25b2", "degraded link"))
         items.append(swatch(palette["mismatch"], "\u25b2", "mismatch"))
+    if vlan_findings:
+        items.append(swatch(palette["mismatch"], "\u26a0", "[VLAN] finding"))
     return "&nbsp;&nbsp;&nbsp;".join(items)
 
 
@@ -95,7 +98,8 @@ def build_graph(
         infos: Per device (keyed by its id as used in ``links`` and ``groups``): ``label``,
             ``sub``, ``badge``, ``kind``, ``status``, ``seed``, ``rank``.
         links: One entry per drawn link: ``from``, ``to``, ``color``, ``width``, ``dashed``,
-            ``label``, ``fromPorts``, ``toPorts``, ``warn``, ``speed_style``.
+            ``label``, ``fromPorts``, ``toPorts``, ``warn``, ``speed_style`` and (optional)
+            ``vlan_warn``: the severity of a VLAN finding, drawn as a ``\u26a0 [VLAN]`` tag.
         groups: Endpoint badges: ``sw`` (the switch), ``id``, ``text`` and the ``members`` they
             stand for.
         tier_names: Row rank -> tier name, drawn at the left of its row.
@@ -143,7 +147,13 @@ def build_graph(
     for link in links:
         speeds.setdefault(link["speed_style"], link["color"])
     speed_items = [(name, color) for name, color in speeds.items() if name != "?"]
-    legend = _legend(counts, speed_items, palette, any(link["warn"] for link in links))
+    legend = _legend(
+        counts,
+        speed_items,
+        palette,
+        any(link["warn"] for link in links),
+        any(link.get("vlan_warn") for link in links),
+    )
     dot.attr(
         label=(
             '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="2"><TR><TD ALIGN="LEFT">'
@@ -225,6 +235,8 @@ def build_graph(
         text = link["label"]
         if link["warn"]:
             text = (text + "\n" if text else "") + f"\u25b2 {link['warn']}"
+        if link.get("vlan_warn"):
+            text = (text + "\n" if text else "") + "\u26a0 [VLAN]"
         attrs = {
             "color": link["color"],
             "penwidth": str(link["width"]),

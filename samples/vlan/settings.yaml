@@ -1,0 +1,9 @@
+# Settings for the VLAN replay demo:
+#   python3 main.py --config samples/vlan/settings.yaml --replay samples/vlan --dry-run
+seed:
+  host: 10.0.0.11
+  device_type: cisco_ios
+
+crawl:
+  allowed_subnets:
+    - 10.0.0.0/16

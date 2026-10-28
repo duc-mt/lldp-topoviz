@@ -1,0 +1,51 @@
+Chassis id: 0c4d.e900.0a01
+Port id: Gi1/0/1
+Local Port id: Eth1/1
+Port Description: GigabitEthernet1/0/1
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.11
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0a01
+Port id: Gi1/0/2
+Local Port id: Eth1/2
+Port Description: GigabitEthernet1/0/2
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.11
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0a01
+Port id: Gi1/0/3
+Local Port id: Eth1/3
+Port Description: GigabitEthernet1/0/3
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.11
+Management Address IPV6: not advertised
+Vlan ID: not advertised
+
+Chassis id: 0c4d.e900.0a01
+Port id: Gi1/0/4
+Local Port id: Eth1/4
+Port Description: GigabitEthernet1/0/4
+System Name: core1.lab.local
+System Description: Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4, RELEASE SOFTWARE (fc5)
+Time remaining: 101 seconds
+System Capabilities: B, R
+Enabled Capabilities: B, R
+Management Address: 10.0.0.11
+Management Address IPV6: not advertised
+Vlan ID: not advertised

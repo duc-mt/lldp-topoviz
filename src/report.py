@@ -3,7 +3,9 @@
 Module Name:   report.py
 Description:   Text report for the crawl blind-spot audit: which neighbors were
                seen but not crawled, where they were seen, why, what is missing
-               from the diagram as a result and how to fix it.
+               from the diagram as a result and how to fix it. Also the per-seed
+               status lines of a multi-seed crawl, the VLAN mismatch list and the
+               crawl history listing.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-17
 Version:       1.0.0
@@ -19,8 +21,9 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import sys
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from src.models import (
     REASON_AUTH_FAILURE,
@@ -35,7 +38,18 @@ from src.models import (
     BlindSpot,
 )
 
-__all__ = ["blind_spots_payload", "format_blind_spots"]
+if TYPE_CHECKING:
+    from src.crawler import SeedResult
+
+__all__ = [
+    "blind_spots_payload",
+    "describe_changes",
+    "format_blind_spots",
+    "format_history",
+    "format_seed_summary",
+    "seeds_payload",
+    "status_symbols",
+]
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -149,3 +163,113 @@ def format_blind_spots(blind_spots: Sequence[BlindSpot], crawled: int, limit: in
 def blind_spots_payload(blind_spots: Sequence[BlindSpot]) -> list[dict[str, Any]]:
     """The ``blind_spots`` list as written to the snapshot metadata and the HTML viewer."""
     return [spot.to_dict() for spot in blind_spots]
+
+
+# ------------------------------------------------------------ status symbols
+def status_symbols(stream: TextIO | None = None) -> dict[str, str]:
+    """``ok`` / ``fail`` / ``warn`` marks for the console: ``✔ ✖ ⚠``, or ASCII where the
+    console encoding (a Windows code page, a C locale) cannot print them."""
+    encoding = getattr(stream or sys.stdout, "encoding", None) or "ascii"
+    try:
+        "\u2714\u2716\u26a0".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return {"ok": "[ok]", "fail": "[x]", "warn": "[!]"}
+    return {"ok": "\u2714", "fail": "\u2716", "warn": "\u26a0"}
+
+
+# ------------------------------------------------------------------- seeds
+_SEED_MARK = {"crawled": "ok", "duplicate": "ok", "failed": "fail"}
+_SEED_WORDS = {
+    "crawled": "crawled",
+    "duplicate": "already crawled",
+    "failed": "failed",
+    "out_of_scope": "out of scope (never contacted)",
+    "skipped": "not reached",
+}
+
+
+def format_seed_summary(
+    seeds: Sequence[SeedResult], symbols: dict[str, str] | None = None
+) -> list[str]:
+    """One line per seed of a multi-seed crawl: its status and how much it led to.
+
+    Returns ``[]`` for a crawl with a single seed (the summary names it on one line then).
+    """
+    if len(seeds) < 2:
+        return []
+    marks = symbols or status_symbols()
+    width = max(len(_clean(seed.host)) for seed in seeds)
+    lines = []
+    for seed in seeds:
+        mark = marks[_SEED_MARK.get(seed.status, "warn")]
+        text = _SEED_WORDS.get(seed.status, seed.status)
+        if seed.status == "crawled":
+            text += f": {seed.crawled} device(s) crawled, {seed.discovered} discovered"
+        elif seed.detail:
+            text += f": {_clean(seed.detail)}"
+        lines.append(f"   {mark} {_clean(seed.host):<{width}}  {text}")
+    return lines
+
+
+def seeds_payload(seeds: Sequence[SeedResult]) -> list[dict[str, Any]]:
+    """The per-seed results as written to the snapshot metadata and the web API."""
+    return [
+        {
+            "host": seed.host,
+            "device_type": seed.device_type,
+            "status": seed.status,
+            "detail": seed.detail,
+            "crawled": seed.crawled,
+            "discovered": seed.discovered,
+        }
+        for seed in seeds
+    ]
+
+
+# ----------------------------------------------------------------- history
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" + ("" if count == 1 else "s")
+
+
+def describe_changes(diff: dict[str, Any]) -> str:
+    """One line for the ``diff`` summary of a history run: ``+1 device, 1 cable moved ...``."""
+    if diff.get("first_run"):
+        return "first recorded run"
+    bits = []
+    for key, sign, noun in (
+        ("devices_added", "+", "device"),
+        ("devices_removed", "-", "device"),
+        ("links_added", "+", "link"),
+        ("links_removed", "-", "link"),
+    ):
+        if diff.get(key):
+            bits.append(f"{sign}{_plural(diff[key], noun)}")
+    if diff.get("reconnections"):
+        bits.append(f"{_plural(diff['reconnections'], 'cable')} moved")
+    if diff.get("speed_downgrades"):
+        bits.append(_plural(diff["speed_downgrades"], "speed downgrade"))
+    other = diff.get("speed_changes", 0) - diff.get("speed_downgrades", 0)
+    if other > 0:
+        bits.append(_plural(other, "speed upgrade"))
+    if diff.get("new_blind_spots"):
+        bits.append(_plural(diff["new_blind_spots"], "new blind spot"))
+    return ", ".join(bits) or "no changes"
+
+
+def format_history(runs: Sequence[dict[str, Any]]) -> str:
+    """The ``--history`` listing: one entry per recorded crawl, newest first."""
+    if not runs:
+        return "No crawl has been recorded yet (a crawl without --dry-run adds one)."
+    lines = [f"Crawl history ({len(runs)} run(s), newest first):"]
+    for run in runs:
+        when = _clean(run.get("timestamp"))[:19].replace("T", " ")
+        seeds = ", ".join(_clean(seed) for seed in run.get("seeds") or []) or "?"
+        lines.append(
+            f"  {when}  {_clean(run.get('run_id'))}  "
+            f"{run.get('devices', 0)} devices, {run.get('links', 0)} links, "
+            f"{run.get('blind_spots', 0)} blind spot(s), {run.get('warnings', 0)} link warning(s)"
+            + ("  [partial]" if run.get("partial") else "")
+        )
+        lines.append(f"      seeds: {seeds}")
+        lines.append(f"      changes: {describe_changes(run.get('diff') or {})}")
+    return "\n".join(lines)

@@ -1,0 +1,79 @@
+------------------------------------------------
+Local Intf: Gi1/0/1
+Chassis id: 0c4d.e900.0b01
+Port id: Eth1/1
+Port Description: to core1
+System Name: dist1.lab.local
+
+System Description:
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.11
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+------------------------------------------------
+Local Intf: Gi1/0/2
+Chassis id: 0c4d.e900.0b01
+Port id: Eth1/2
+Port Description: to core1
+System Name: dist1.lab.local
+
+System Description:
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.11
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+------------------------------------------------
+Local Intf: Gi1/0/3
+Chassis id: 0c4d.e900.0b01
+Port id: Eth1/3
+Port Description: to core1
+System Name: dist1.lab.local
+
+System Description:
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.11
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised
+
+------------------------------------------------
+Local Intf: Gi1/0/4
+Chassis id: 0c4d.e900.0b01
+Port id: Eth1/4
+Port Description: to core1
+System Name: dist1.lab.local
+
+System Description:
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+
+Time remaining: 98 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+    IP: 10.0.1.11
+Auto Negotiation - not supported
+Physical media capabilities - not advertised
+Media Attachment Unit type - not advertised
+Vlan ID: - not advertised

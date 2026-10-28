@@ -3,8 +3,9 @@
 ==============================================================================
 Module Name:   main.py
 Description:   CLI entry point and pipeline orchestrator: crawl a network over
-               LLDP from a seed device, build the topology graph and write an
-               interactive HTML diagram.
+               LLDP from one or several seed devices, build the topology graph,
+               write an interactive HTML diagram, record the crawl in the history
+               and, with --serve, host the explorer and a JSON API.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-10
 Version:       1.0.0
@@ -25,19 +26,30 @@ from pathlib import Path
 from src import MapperError, __version__
 from src.config import (
     ConnectionSettings,
+    HistorySettings,
     SeedSettings,
     TelegramSettings,
+    WebSettings,
     load_settings,
     section,
 )
 from src.crawler import CrawlConfig, Crawler, CrawlResult
-from src.graph_engine import STATUS_DISCOVERED, STATUS_FAILED, GraphEngine
+from src.graph_engine import STATUS_DISCOVERED, STATUS_FAILED, GraphEngine, HistoryStore
+from src.linkcheck import is_vlan_warning
 from src.notifier import TelegramNotifier
 from src.parser import LldpParser
 from src.poller import BasePoller, DevicePoller, FilePoller, RawCapture
-from src.report import blind_spots_payload, format_blind_spots
+from src.report import (
+    blind_spots_payload,
+    describe_changes,
+    format_blind_spots,
+    format_history,
+    format_seed_summary,
+    seeds_payload,
+)
 from src.vendors import load_custom_vendors, supported_device_types
 from src.visualizer import TopologyVisualizer, VisualizationError, VisualOptions, load_snapshot
+from src.web import create_server, serve
 
 
 def _get_base_dir() -> Path:
@@ -84,6 +96,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="seed device IP or DNS name, overrides seed.host from the settings file",
     )
     ap.add_argument(
+        "--seeds",
+        metavar="HOST[,HOST...]",
+        help="several seed devices, comma separated (disconnected islands, several data "
+        "centers); they are crawled into one topology and every one must be inside the "
+        "allowed subnets. Takes precedence over --seed and over the seeds in the settings file",
+    )
+    ap.add_argument(
         "--device-type",
         metavar="TYPE",
         help="Netmiko device type of the seed, overrides the settings file "
@@ -125,6 +144,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="do not read interface speed/duplex or check links (saves a command per device)",
     )
     ap.add_argument(
+        "--no-vlan-checks",
+        action="store_true",
+        help="do not read switchport / VLAN data or compare the VLANs of the two ends of a link "
+        "(saves a command per device)",
+    )
+    ap.add_argument(
         "--replay",
         type=Path,
         metavar="DIR",
@@ -152,6 +177,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="crawl and draw without writing the JSON snapshot to data/",
     )
     ap.add_argument(
+        "--history",
+        nargs="?",
+        type=int,
+        const=20,
+        default=None,
+        metavar="N",
+        help="list the N most recent recorded crawls (default 20; 0 = all) with what changed "
+        "in each, and exit without crawling",
+    )
+    ap.add_argument(
+        "--serve",
+        action="store_true",
+        help="host the explorer page and a JSON API (/api/status, /api/history, /api/crawl) "
+        "instead of crawling now",
+    )
+    ap.add_argument(
+        "--port",
+        type=int,
+        metavar="PORT",
+        help="port of --serve (default 8080; LLDP_MONITOR_PORT or web.port in the settings file)",
+    )
+    ap.add_argument(
+        "--bind",
+        metavar="ADDR",
+        help="address of --serve (default 127.0.0.1: this machine only; LLDP_MONITOR_BIND or "
+        "web.bind in the settings file). The crawl trigger uses your device credentials",
+    )
+    ap.add_argument(
         "--init",
         action="store_true",
         help="generate sample settings.yaml in the current directory and exit",
@@ -174,7 +227,13 @@ def print_summary(result: CrawlResult, engine: GraphEngine) -> None:
     print("=" * 64)
     print(" LLDP Topology Summary")
     print("=" * 64)
-    print(f" Seed      : {result.seed}")
+    seed_lines = format_seed_summary(result.seeds)
+    if seed_lines:
+        print(f" Seeds     : {len(result.seeds)} ({', '.join(result.seed_hosts)})")
+        for line in seed_lines:
+            print(line)
+    else:
+        print(f" Seed      : {result.seed}")
     print(
         f" Devices   : {graph.number_of_nodes()} "
         f"({counts['crawled']} crawled, {counts['failed']} failed, "
@@ -204,8 +263,17 @@ def print_summary(result: CrawlResult, engine: GraphEngine) -> None:
         for n, a in sorted(graph.nodes(data=True))
         if a["status"] == STATUS_DISCOVERED
     ]
+    vlan_findings = sorted(
+        {
+            f"{w['text']} [{w['severity']}]"
+            for _u, _v, data in graph.edges(data=True)
+            for w in data.get("warnings", [])
+            if is_vlan_warning(w["kind"])
+        }
+    )
     section_out("!! Failed", failed)
     section_out("Not crawled", skipped)
+    section_out("VLAN mismatches", vlan_findings)
     if result.limit_hit:
         print("\n !! crawl.max_devices was reached; the map may be incomplete.")
     blind_spots = format_blind_spots(result.blind_spots, counts["crawled"])
@@ -226,12 +294,20 @@ def build_poller(
         and crawl_config.link_checks.enabled
         and not args.no_link_checks
     )
+    collect_vlan = (
+        crawl_config.collect_vlan_info
+        and crawl_config.link_checks.enabled
+        and crawl_config.link_checks.vlan
+        and not getattr(args, "no_vlan_checks", False)
+        and not args.no_link_checks
+    )
     if args.replay:
         return FilePoller(
             args.replay,
             collect_lag=collect_lag,
             protocols=crawl_config.protocols,
             collect_status=collect_status,
+            collect_vlan=collect_vlan,
         )
     return DevicePoller(
         ConnectionSettings.from_settings(settings, source=config_path),
@@ -240,6 +316,7 @@ def build_poller(
         collect_lag=collect_lag,
         protocols=crawl_config.protocols,
         collect_status=collect_status,
+        collect_vlan=collect_vlan,
     )
 
 
@@ -297,8 +374,14 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
         print("[!] Failed to deliver test alert. Check credentials, chat ID, and network logs.")
         return EXIT_ERROR
 
+    if getattr(args, "history", None) is not None:
+        runs = HistoryStore(DATA_DIR).runs(limit=args.history if args.history > 0 else None)
+        print(format_history(runs))
+        return EXIT_OK
+
+    serving = getattr(args, "serve", False)
     try:
-        settings = load_settings(args.config, required=not args.replay)
+        settings = load_settings(args.config, required=not (args.replay or serving))
     except Exception:
         if not args.config.exists():
             print(f"Error: configuration file '{args.config}' not found.")
@@ -306,9 +389,21 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             return EXIT_ERROR
         raise
 
+    if serving:
+        return serve_mode(args, settings)
+
     # Build every stage first so configuration problems surface before any SSH traffic.
     load_custom_vendors(settings.get("custom_vendors"), base_dir=BASE_DIR)
-    seed = SeedSettings.from_settings(settings, host=args.seed, device_type=args.device_type)
+    seeds = SeedSettings.collect(
+        settings,
+        hosts=getattr(args, "seeds", None),
+        host=args.seed,
+        device_type=args.device_type,
+    )
+    if getattr(args, "seeds", None) and args.seed:
+        logger.warning("--seeds takes precedence: ignoring --seed %s", args.seed)
+    seed = seeds[0]
+    seed_text = ", ".join(item.host for item in seeds)
     crawl_config = CrawlConfig.from_settings(
         settings.get("crawl"),
         extra_subnets=args.allow,
@@ -335,12 +430,15 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
         seed_host=seed.host,
         seed_device_type=seed.device_type,
         raw_sink=capture.write if capture else None,
+        extra_seeds=[(item.host, item.device_type) for item in seeds[1:]],
     )
     result = crawler.run()  # 1-3. Poll, parse and build the graph, device by device
 
     print_summary(result, engine)  # shown even if rendering fails below
     metadata = {
         "seed": seed.host,
+        "seeds": [item.host for item in seeds],
+        "seed_results": seeds_payload(result.seeds),
         "device_type": seed.device_type,
         "source": str(args.replay) if args.replay else "ssh",
         "sessions": result.attempted,
@@ -355,7 +453,18 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     if args.dry_run:
         print("\n [DRY RUN] Snapshot not written.")
     else:
-        engine.save(metadata)  # 4. Snapshot
+        history_settings = HistorySettings.from_settings(settings)
+        history = (
+            HistoryStore(engine.data_dir, max_runs=history_settings.max_runs)
+            if history_settings.enabled
+            else None
+        )
+        engine.save(metadata, history=history)  # 4. Snapshot (+ the crawl history)
+        if engine.last_run:
+            print(
+                f"\n History   : run {engine.last_run['run_id']} - "
+                f"{describe_changes(engine.last_run['diff'])}"
+            )
     if args.save_raw:
         logger.info("Raw CLI output saved to %s", args.save_raw)
     # 5. Visualize: the page first, so a failing picture never costs the page
@@ -404,7 +513,7 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
                 level="warning",
                 attachment_path=attachment,
                 metadata={
-                    "target": seed.host,
+                    "target": seed_text,
                     "hint": "Check device credentials, reachability or subnet scope.",
                 },
             )
@@ -412,18 +521,45 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             notifier.send_alert(
                 title="Topology Crawl Succeeded",
                 message=(
-                    f"Crawl successful from seed {seed.host}: {result.crawled} devices crawled, "
+                    f"Crawl successful from seed {seed_text}: {result.crawled} devices crawled, "
                     f"{engine.graph.number_of_edges()} links mapped in {result.duration:.1f}s."
                 ),
                 level="info",
                 attachment_path=attachment,
                 metadata={
-                    "target": seed.host,
+                    "target": seed_text,
                     "hint": "Topology diagram and snapshot updated.",
                 },
             )
 
     return EXIT_PARTIAL if result.partial else EXIT_OK
+
+
+def serve_mode(args: argparse.Namespace, settings: dict) -> int:
+    """``--serve``: host the explorer and the JSON API until interrupted.
+
+    ``POST /api/crawl`` runs the normal pipeline (``run``) with the options this command was
+    started with, minus ``--serve``.
+    """
+    web = WebSettings.from_settings(settings, port=args.port, bind=args.bind)
+    history_settings = HistorySettings.from_settings(settings)
+    _image, page = output_paths(args.output)
+
+    def crawl_once() -> int:
+        return run(argparse.Namespace(**{**vars(args), "serve": False, "history": None}))
+
+    server = create_server(
+        web.bind,
+        web.port,
+        data_dir=DATA_DIR,
+        page_path=page,
+        crawl_runner=crawl_once,
+        history=HistoryStore(DATA_DIR, max_runs=history_settings.max_runs),
+    )
+    print(f"\n Explorer  : http://{web.bind}:{web.port}/   (Ctrl+C to stop)")
+    print(" API       : /api/status  /api/history  /api/history/<run_id>  POST /api/crawl\n")
+    serve(server)
+    return EXIT_OK
 
 
 def output_paths(output: Path | None) -> tuple[Path | None, Path]:

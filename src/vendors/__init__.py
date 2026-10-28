@@ -28,6 +28,7 @@ from netmiko.utilities import get_template_dir
 
 from src import MapperError
 from src.config import ConfigError
+from src.models import PortVlanInfo
 from src.vendors.base import (
     FieldMap,
     InterfaceStatus,
@@ -47,6 +48,7 @@ from src.vendors.status import (
     parse_vyos_interfaces,
     parse_xr_interfaces,
 )
+from src.vendors.vlan import parse_switchport
 
 __all__ = [
     "PROFILES",
@@ -61,6 +63,7 @@ __all__ = [
     "StatusProfile",
     "UnsupportedVendorError",
     "VendorProfile",
+    "VlanProfile",
     "get_profile",
     "guess_device_type",
     "is_supported",
@@ -150,6 +153,19 @@ class StatusProfile:
 
 
 @dataclass(frozen=True)
+class VlanProfile:
+    """How to read the VLAN setup of each port: mode, access / native VLAN, allowed VLANs."""
+
+    command: str
+    template: str
+    parser: Callable[[Sequence[Mapping[str, Any]]], list[PortVlanInfo]]
+    error_markers: tuple[str, ...] = ()
+
+    def resolve_template(self, search_dirs: Sequence[Path] = ()) -> Path:
+        return _resolve_template(self.template, f"'{self.command}'", search_dirs)
+
+
+@dataclass(frozen=True)
 class VendorProfile:
     """Everything platform-specific about discovering neighbors on a device.
 
@@ -160,9 +176,9 @@ class VendorProfile:
     platform names differ (e.g. ``huawei`` vs ``huawei_vrp``).
 
     ``protocols`` adds vendor protocols (CDP, FDP, ...) that are read in the same session and
-    merged with LLDP. ``lag`` and ``status`` (optional) describe the port-channel and
-    interface-status commands; without them the device's links are drawn without bundles or
-    link checks.
+    merged with LLDP. ``lag``, ``status`` and ``vlan`` (optional) describe the port-channel,
+    interface-status and switchport (VLAN) commands; without them the device's links are drawn
+    without bundles, link checks or VLAN checks.
     """
 
     key: str
@@ -174,6 +190,7 @@ class VendorProfile:
     lag: LagProfile | None = None
     protocols: tuple[ProtocolProfile, ...] = ()
     status: StatusProfile | None = None
+    vlan: VlanProfile | None = None
 
     def resolve_template(self, search_dirs: Sequence[Path] = ()) -> Path:
         """Locate the (LLDP) TextFSM template file.
@@ -494,6 +511,24 @@ _STATUS_PROFILES = {
 for _device_types, _status in _STATUS_PROFILES.items():
     for _device_type in _device_types:
         PROFILES[_device_type] = replace(PROFILES[_device_type], status=_status)
+
+_VLAN_PROFILES = {
+    ("cisco_ios", "cisco_xe"): VlanProfile(
+        "show interfaces switchport",
+        "cisco_ios_show_interfaces_switchport.textfsm",
+        parse_switchport,
+        _IOS_ERRORS,
+    ),
+    ("cisco_nxos",): VlanProfile(
+        "show interface switchport",
+        "cisco_nxos_show_interface_switchport.textfsm",
+        parse_switchport,
+        _IOS_ERRORS + ("Invalid command", "% Invalid"),
+    ),
+}
+for _device_types, _vlan in _VLAN_PROFILES.items():
+    for _device_type in _device_types:
+        PROFILES[_device_type] = replace(PROFILES[_device_type], vlan=_vlan)
 
 #: Platforms that are known but deliberately not built in, with the reason.
 UNSUPPORTED_HINTS = {

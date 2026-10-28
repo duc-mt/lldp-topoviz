@@ -1,0 +1,39 @@
+Name: Ethernet1/1
+  Switchport: Enabled
+  Switchport Monitor: Not enabled
+  Operational Mode: trunk
+  Access Mode VLAN: 1 (default)
+  Trunking Native Mode VLAN: 99 (VLAN0099)
+  Trunking VLANs Allowed: 10,20,30
+  Voice VLAN: none
+  Extended Trust State : not trusted [COS = 0]
+
+Name: Ethernet1/2
+  Switchport: Enabled
+  Switchport Monitor: Not enabled
+  Operational Mode: trunk
+  Access Mode VLAN: 1 (default)
+  Trunking Native Mode VLAN: 1 (default)
+  Trunking VLANs Allowed: 10,20,30
+  Voice VLAN: none
+  Extended Trust State : not trusted [COS = 0]
+
+Name: Ethernet1/3
+  Switchport: Enabled
+  Switchport Monitor: Not enabled
+  Operational Mode: trunk
+  Access Mode VLAN: 1 (default)
+  Trunking Native Mode VLAN: 1 (default)
+  Trunking VLANs Allowed: 10,20,30
+  Voice VLAN: none
+  Extended Trust State : not trusted [COS = 0]
+
+Name: Ethernet1/4
+  Switchport: Enabled
+  Switchport Monitor: Not enabled
+  Operational Mode: trunk
+  Access Mode VLAN: 1 (default)
+  Trunking Native Mode VLAN: 1 (default)
+  Trunking VLANs Allowed: 1-4094
+  Voice VLAN: none
+  Extended Trust State : not trusted [COS = 0]

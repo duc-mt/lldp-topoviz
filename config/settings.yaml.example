@@ -6,7 +6,7 @@
 # instead. Environment variables always override this file.
 # ==============================================================================
 
-# Where the crawl starts. --seed / --device-type on the command line win.
+# Where the crawl starts. --seeds, then --seed, then --device-type on the command line win.
 seed:
   host: ""                 # IP or DNS name of the seed device
   device_type: cisco_ios   # cisco_ios, cisco_xe, cisco_nxos, cisco_xr, arista_eos,
@@ -28,6 +28,11 @@ device:
 crawl:
   allowed_subnets:
     - 10.0.0.0/8
+  seeds: []                # more starting devices, for networks in several islands or data centers.
+  #  - 10.20.0.1           # They are crawled into one topology and share one visited set, so a device
+  #  - core.dc2.example.net #  reachable from two seeds is polled once. seed.host (if set) is crawled
+                           # first. Every seed must be inside allowed_subnets (an outside seed is
+                           # skipped and reported). --seeds A,B on the command line replaces all of this.
   max_depth: 10            # hops from the seed (seed = 0, null = unlimited)
   max_devices: 200         # most devices to log in to (null = unlimited)
   exclude_hostnames: []    # regexes; matching neighbors are shown but never crawled
@@ -40,6 +45,8 @@ crawl:
                               # as long as another works. Add your own under custom_vendors.protocols.
   collect_port_channels: true # also read port-channels (one extra command per device) to draw LAGs
   collect_interface_status: true # also read each port's speed/duplex (one extra command) for link checks
+  collect_vlan_info: true     # also read each port's switchport mode, native and allowed VLANs
+                              # (one extra command; Cisco IOS / IOS-XE / NX-OS) to compare VLANs per link
   default_device_type: null   # for neighbors we cannot identify; null = same as the seed
   device_type_rules: []       # tried before the built-in rules, first match wins
   #  - pattern: "ruckus"
@@ -57,6 +64,8 @@ link_checks:
   enabled: true
   ignore_ports: []        # regexes on interface names whose findings you accept, e.g. "^Fa" (100M by design)
   ignore_hostnames: []    # regexes on device names whose ports are never judged
+  vlan: true              # compare the VLAN setup of the two ends: trunk against access and a different
+                          # native VLAN are mismatches, an allowed-VLAN list that differs is degraded
 
 # How the diagram looks.
 visualization:
@@ -118,3 +127,15 @@ telegram:
   send_image: true              # attach topology snapshot when available
   proxy_url: null               # e.g., "http://proxy.corp.internal:8080" for air-gapped NOCs
 
+# Crawl history: every crawl without --dry-run is stored in data/history/history.db with what changed
+# since the one before (devices and links added or removed, cables moved, speed changes, new blind
+# spots). `main.py --history` lists it; the explorer page gets a time scrubber when served.
+history:
+  enabled: true
+  max_runs: 500            # the oldest runs are dropped beyond this (0 = keep everything)
+
+# Embedded web server for `main.py --serve`: the explorer page, a JSON API and an on-demand crawl.
+# --port / --bind and LLDP_MONITOR_PORT / LLDP_MONITOR_BIND win over these.
+web:
+  port: 8080
+  bind: 127.0.0.1          # this machine only. POST /api/crawl logs in to devices with your credentials

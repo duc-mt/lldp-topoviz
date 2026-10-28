@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from src import (
@@ -27,6 +27,7 @@ from src import (
     normalize_hostname,
     normalize_interface,
 )
+from src.models import PortVlanInfo
 
 
 class ParserError(MapperError):
@@ -167,6 +168,9 @@ class LldpNeighbor:
     # ``endpoint_ap`` / ``endpoint_server`` / ``endpoint_generic`` for a leaf endpoint that
     # must never be logged in to, ``""`` for anything that may be network infrastructure.
     endpoint_class: str = ""
+    # Set by the parser (src/parser.py) from the reporting device's own switchport table: the
+    # VLAN setup of ``local_interface``. Not part of the neighbor's identity (no compare / hash).
+    local_vlan_info: PortVlanInfo | None = field(default=None, compare=False, hash=False)
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,11 @@ Description:   Renders the NetworkX topology as a single self-contained,
                status, a Core / Distribution / Access / End hierarchy, interface
                names at both ends of every link, port-channels drawn as one
                bundle, link colour by nominal speed, failures shown on the
-               diagram, hover tooltips and a click-to-open details panel.
+               diagram, hover tooltips and a click-to-open details panel. VLAN
+               findings carry a warning triangle tagged [VLAN] and the trunk /
+               native VLAN details in the link panel; a crawl-history bar (shown
+               when the page is served by main.py --serve) steps through the
+               recorded crawls.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-10
 Version:       1.2.0
@@ -33,8 +37,11 @@ from typing import Any
 import networkx as nx
 from pyvis.network import Network
 
-from src import MapperError, normalize_interface
+from src import MapperError, atomic_write_text, normalize_interface
 from src.diagram_assets import (
+    HISTORY_CSS,
+    HISTORY_ENGINE_JS,
+    HISTORY_UI_JS,
     OPS_CSS,
     OPS_ENGINE_JS,
     OPS_UI_JS,
@@ -63,7 +70,13 @@ from src.enrichment import (
 )
 from src.graph_engine import STATUS_CRAWLED, STATUS_DISCOVERED, STATUS_FAILED
 from src.icons import icon_uri
-from src.linkcheck import SEVERITY_DEGRADED, SEVERITY_MISMATCH, End, effective_speed
+from src.linkcheck import (
+    SEVERITY_DEGRADED,
+    SEVERITY_MISMATCH,
+    End,
+    effective_speed,
+    is_vlan_warning,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +170,14 @@ def graph_from_snapshot(payload: dict[str, Any]) -> nx.MultiGraph:
             )
             if state
         }
+        vlan = {
+            node: info
+            for node, info in (
+                (source, link.get("source_vlan")),
+                (target, link.get("target_vlan")),
+            )
+            if info
+        }
         graph.add_edge(
             source,
             target,
@@ -164,6 +185,7 @@ def graph_from_snapshot(payload: dict[str, Any]) -> nx.MultiGraph:
             bundles=bundles,
             sources=set(link.get("sources", [])),
             oper=oper,
+            vlan=vlan,
             warnings=list(link.get("warnings", [])),
         )
     return graph
@@ -375,8 +397,7 @@ class TopologyVisualizer:
             page = self._make_self_contained(page)
         page = self._inject_page(page, graph, infos, links, layout, metadata or {}, groups, diff)
         try:
-            self.output_path.parent.mkdir(parents=True, exist_ok=True)
-            self.output_path.write_text(page, encoding="utf-8")
+            atomic_write_text(self.output_path, page)
         except OSError as exc:
             raise VisualizationError(f"Could not write {self.output_path}: {exc}") from exc
         logger.info("Diagram written to %s", self.output_path)
@@ -415,6 +436,7 @@ class TopologyVisualizer:
                 "fromPorts": record["fromPorts"],
                 "toPorts": record["toPorts"],
                 "warn": record["warn"],
+                "vlan_warn": record["vlan_warn"],
                 "speed_style": record["speed_style"],
             }
             for record, edge in zip(records, sink.edges, strict=True)
@@ -468,7 +490,10 @@ class TopologyVisualizer:
         dot = self.build_image_graph(graph, metadata, fmt)
         try:
             out.parent.mkdir(parents=True, exist_ok=True)
-            rendered = dot.render(filename=out.stem, directory=str(out.parent), cleanup=True)
+            # Drawn under a .tmp name and renamed into place, so a reader never sees half a picture.
+            rendered = dot.render(filename=f"{out.stem}.tmp", directory=str(out.parent), cleanup=True)
+            os.replace(rendered, out)
+            rendered = str(out)
         except graphviz.ExecutableNotFound as exc:
             raise VisualizationError(
                 "The Graphviz 'dot' program was not found (install the system package: apt install graphviz / "
@@ -627,6 +652,7 @@ class TopologyVisualizer:
                 "label": _safe(attrs["label"] or node_id),
                 "status": status,
                 "seed": bool(attrs.get("seed")),
+                "seed_origin": _safe(attrs.get("seed_origin")),
                 "kind": kinds[node_id],
                 "tier": TIER_TITLES[layout.tiers[node_id]] if layout else "",
                 # Failure simulation: how far from the Core (0 = top), whether it is a Core device,
@@ -922,6 +948,20 @@ class TopologyVisualizer:
             if warnings
             else ""
         )
+        vlan_findings = [w for w in warnings if is_vlan_warning(w["kind"])]
+        vlan_warn = (
+            SEVERITY_MISMATCH
+            if any(w["severity"] == SEVERITY_MISMATCH for w in vlan_findings)
+            else SEVERITY_DEGRADED
+            if vlan_findings
+            else ""
+        )
+        vlan_rows = []
+        for link in group:
+            ends = link[6].get("vlan", {})
+            side_a, side_b = ends.get(first), ends.get(second)
+            if side_a or side_b:
+                vlan_rows.append({"a": self._vlan_view(side_a), "b": self._vlan_view(side_b)})
         sources = sorted(set().union(*(link[6].get("sources", set()) for link in group)))
         cdp_only = bool(sources) and "lldp" not in sources
 
@@ -961,7 +1001,11 @@ class TopologyVisualizer:
             lines.append(f"{label_a} {a_port or '?'}  <->  {label_b} {b_port or '?'}{state}{oper}")
         if sources:
             lines.append("Seen by: " + " + ".join(s.upper() for s in sources))
-        lines.extend(f"WARNING ({w['severity']}): {w['text']}" for w in warnings)
+        lines.extend(
+            f"WARNING ({w['severity']}): " + ("\u26a0 [VLAN] " if is_vlan_warning(w["kind"]) else "")
+            + w["text"]
+            for w in warnings
+        )
 
         edge_id = f"e{len(net.edges)}"
         ghost = all(link[6].get("_ghost") for link in group)
@@ -1013,10 +1057,25 @@ class TopologyVisualizer:
             "sources": sources,
             "warn": severity,
             "warnings": warnings,
+            "vlan_warn": vlan_warn,
+            "vlan": vlan_rows,
             "checked": any(link[6].get("oper") for link in group),
             "label": label,
             **({"ghost": True} if ghost else {}),
             **({"diff": diff} if diff else {}),
+        }
+
+    @staticmethod
+    def _vlan_view(info: dict[str, Any] | None) -> dict[str, Any] | None:
+        """One end's VLAN setup as the link panel shows it (``None`` if it reported none)."""
+        if not info:
+            return None
+        return {
+            "interface": _safe(info.get("interface")),
+            "mode": _safe(info.get("mode")),
+            "access_vlan": info.get("access_vlan"),
+            "native_vlan": info.get("native_vlan"),
+            "allowed_vlans": _safe(info.get("allowed_vlans") or ""),
         }
 
     @staticmethod
@@ -1147,6 +1206,8 @@ class TopologyVisualizer:
                         "sources",
                         "warn",
                         "warnings",
+                        "vlan_warn",
+                        "vlan",
                         "checked",
                         "label",
                         "ghost",
@@ -1163,6 +1224,7 @@ class TopologyVisualizer:
                     "b": r["b"],
                     "severity": w["severity"],
                     "text": w["text"],
+                    "vlan": is_vlan_warning(w["kind"]),
                 }
                 for r in links
                 for w in r["warnings"]
@@ -1272,6 +1334,12 @@ class TopologyVisualizer:
                 "warn:mismatch",
                 f'<span class="wm" style="background:{COLOR_MISMATCH}">!</span>Mismatch ({mismatch})',
             )
+        vlan_count = sum(1 for r in links if r["vlan_warn"])
+        if vlan_count:
+            warn_rows += item(
+                "warn:vlan",
+                f'<span class="wm" style="background:{COLOR_MISMATCH}">!</span>[VLAN] ({vlan_count})',
+            )
         checked = sum(1 for r in links if r["checked"])
         if warn_rows:
             warn_note = f"{checked} of {len(links)} links checked."
@@ -1295,7 +1363,7 @@ class TopologyVisualizer:
             ]
         )
         markup = f"""
-<style>{PAGE_CSS}{SIM_CSS}{OPS_CSS}</style>
+<style>{PAGE_CSS}{SIM_CSS}{OPS_CSS}{HISTORY_CSS}</style>
 <header id="top" role="banner">
 <span id="brand"><svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 6v8M16 14l-8 9M16 14l8 9"/></g><g fill="currentColor"><circle cx="16" cy="6" r="3.2"/><circle cx="16" cy="14" r="2.6"/><circle cx="8" cy="23" r="3.2"/><circle cx="24" cy="23" r="3.2"/></g></svg><span class="brand-title">LLDP TOPOLOGY EXPLORER</span></span>
 <span class="top-gap"></span>
@@ -1372,13 +1440,19 @@ Text under a name: management IP &middot; OS. Text along a link: the interface a
 </div>
 <canvas id="minimap" width="160" height="100" aria-label="Minimap radar" title="Minimap: click or drag to move the view"></canvas>
 <div id="hotkeys"><span class="hk">[ / ]</span> Search &nbsp;&middot;&nbsp; <span class="hk">[ F ]</span> Fit &nbsp;&middot;&nbsp; <span class="hk">[ S ]</span> Simulate &nbsp;&middot;&nbsp; <span class="hk">[ Esc ]</span> Deselect</div>
-<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, all_links, layout, metadata.get("blind_spots"), groups, diff, {"seed": str(metadata.get("seed") or ""), "generated": stamp}))};
+<script>window.LLDP_DETAIL={_script_json(self._detail_data(graph, infos, all_links, layout, metadata.get("blind_spots"), groups, diff, {
+                "seed": str(metadata.get("seed") or ""),
+                "seeds": [str(host) for host in metadata.get("seeds") or []],
+                "generated": stamp,
+            }))};
 window.LLDP_STYLE={_script_json({"bg": self.options.bgcolor, "fg": "#323f4b"})};</script>
 <script>{PAGE_JS}</script>
 <script>{SIM_ENGINE_JS}</script>
 <script>{SIM_UI_JS}</script>
 <script>{OPS_ENGINE_JS}</script>
 <script>{OPS_UI_JS}</script>
+<script>{HISTORY_ENGINE_JS}</script>
+<script>{HISTORY_UI_JS}</script>
 """
         if "</body>" not in page:
             raise VisualizationError("Pyvis output has no </body>; cannot add the legend")

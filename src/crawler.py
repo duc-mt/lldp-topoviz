@@ -3,7 +3,10 @@
 Module Name:   crawler.py
 Description:   Breadth-first LLDP crawl: queue of addresses to visit, visited
                set, scope guard (allowed subnets, depth, device limit, exclusions,
-               capabilities) and per-device failure handling.
+               capabilities) and per-device failure handling. One or several seed
+               devices share one queue, one visited set and one alias table, so
+               disconnected islands are merged into a single topology and no
+               device is polled twice.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-10
 Version:       1.0.0
@@ -22,7 +25,7 @@ import re
 import socket
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -49,7 +52,25 @@ from src.vendors.base import KNOWN_CAPABILITIES, LldpNeighbor, normalize_capabil
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CrawlConfig", "CrawlError", "CrawlResult", "Crawler"]
+__all__ = [
+    "SEED_CRAWLED",
+    "SEED_DUPLICATE",
+    "SEED_FAILED",
+    "SEED_OUT_OF_SCOPE",
+    "SEED_SKIPPED",
+    "CrawlConfig",
+    "CrawlError",
+    "CrawlResult",
+    "Crawler",
+    "SeedResult",
+]
+
+# What became of one seed device (``SeedResult.status``).
+SEED_CRAWLED = "crawled"  # logged in to it and read its neighbors
+SEED_FAILED = "failed"  # it could not be crawled (or its name did not resolve)
+SEED_OUT_OF_SCOPE = "out_of_scope"  # outside crawl.allowed_subnets: never contacted
+SEED_DUPLICATE = "duplicate"  # the same device as an earlier seed (another address of it)
+SEED_SKIPPED = "skipped"  # crawl.max_devices was used up before its turn
 
 
 class CrawlError(MapperError):
@@ -80,6 +101,7 @@ class CrawlConfig:
     collect_port_channels: bool = True  # one extra command per device (LAG grouping)
     protocols: tuple[str, ...] = ("lldp", "cdp")  # discovery protocols, in priority order
     collect_interface_status: bool = True  # one extra command per device (link checks)
+    collect_vlan_info: bool = True  # one extra command per device (VLAN consistency checks)
     link_checks: LinkCheckConfig = field(default_factory=LinkCheckConfig)
 
     @classmethod
@@ -159,6 +181,7 @@ class CrawlConfig:
         return cls(
             protocols=names,
             collect_interface_status=bool(crawl.get("collect_interface_status", True)),
+            collect_vlan_info=bool(crawl.get("collect_vlan_info", True)),
             link_checks=LinkCheckConfig.from_settings(link_checks),
             collect_port_channels=bool(crawl.get("collect_port_channels", True)),
             allowed_subnets=tuple(subnets),
@@ -225,11 +248,29 @@ class _Target:
     node_id: str | None
     depth: int
     remaining_hosts: tuple[str, ...] = ()
+    origin: str = ""  # the seed (as given) this target descends from
+
+
+@dataclass
+class SeedResult:
+    """What became of one seed device of the crawl."""
+
+    host: str  # as given (an IP or a DNS name)
+    device_type: str
+    status: str = SEED_SKIPPED  # one of the SEED_* constants
+    detail: str = ""  # why it was not crawled, or the error
+    node_id: str = ""  # its node in the topology graph ("" when it never got one)
+    crawled: int = 0  # devices crawled that this seed led to (itself included)
+    discovered: int = 0  # devices of any status that this seed led to (itself included)
 
 
 @dataclass
 class CrawlResult:
-    """What the crawl did."""
+    """What the crawl did.
+
+    ``seed`` is the first seed; ``seeds`` has one ``SeedResult`` per seed given (in order),
+    including the ones that were skipped or failed.
+    """
 
     seed: str
     attempted: int = 0
@@ -241,6 +282,12 @@ class CrawlResult:
     limit_hit: bool = False
     duration: float = 0.0
     blind_spots: list[BlindSpot] = field(default_factory=list)  # uncrawled infrastructure
+    seeds: list[SeedResult] = field(default_factory=list)
+
+    @property
+    def seed_hosts(self) -> list[str]:
+        """Every seed as given (just ``[seed]`` when the per-seed records are not filled)."""
+        return [item.host for item in self.seeds] or [self.seed]
 
     @property
     def partial(self) -> bool:
@@ -249,7 +296,15 @@ class CrawlResult:
 
 
 class Crawler:
-    """Walk the network from a seed device and fill a ``GraphEngine``."""
+    """Walk the network from one or several seed devices and fill a ``GraphEngine``.
+
+    All seeds start in the same queue (depth 0), so they are served before any deeper device, and
+    share one visited set and one alias table: a device reachable from several seeds is polled
+    once, and seeds in disconnected islands are crawled until each island is exhausted, all into
+    the same graph. ``max_depth`` counts hops from the nearest seed, ``max_devices`` is shared by
+    all seeds. Every device remembers (``seed_origin``) the first seed that led to it; on a tie
+    the seed listed first wins. The crawl is sequential, one SSH session at a time.
+    """
 
     def __init__(
         self,
@@ -260,7 +315,15 @@ class Crawler:
         seed_host: str,
         seed_device_type: str,
         raw_sink: Callable[[RawLldp], None] | None = None,
+        extra_seeds: Sequence[tuple[str, str]] = (),
     ) -> None:
+        """
+        Args:
+            seed_host: The first seed (an IP or DNS name); ``seed_device_type`` is its Netmiko
+                device type.
+            extra_seeds: More seeds as ``(host, device_type)`` pairs (multi-seed crawl). A seed
+                repeated (compared case-insensitively) is crawled once.
+        """
         self.poller = poller
         self.parser = parser
         self.engine = engine
@@ -268,9 +331,14 @@ class Crawler:
         self.seed_host = seed_host
         self.seed_device_type = seed_device_type
         self.raw_sink = raw_sink
+        unique: dict[str, tuple[str, str]] = {}
+        for host, device_type in [(seed_host, seed_device_type), *extra_seeds]:
+            unique.setdefault(str(host).strip().lower(), (str(host).strip(), device_type))
+        self.seeds: list[tuple[str, str]] = list(unique.values())
         self._visited_hosts: set[str] = set()
         self._queued_nodes: set[str] = set()
         self._dns_cache: dict[str, str] = {}
+        self._seed_nodes: dict[str, str] = {}  # seed as given -> its node
 
     # --------------------------------------------------------------- DNS
     def _resolve_host(self, host: str) -> str:
@@ -294,54 +362,126 @@ class Crawler:
                 return self._dns_cache[host]
         raise socket.gaierror(getattr(socket, "EAI_NONAME", -2), f"no IPv4 address for {host!r}")
 
+    # ------------------------------------------------------------------ seeds
+    def _seed_target(self, host: str, device_type: str) -> _Target:
+        """The queue entry for one seed, after checking it against ``crawl.allowed_subnets``.
+
+        A seed given by name is resolved (``device_overrides`` / ``name_to_ip`` first, then DNS)
+        so its address can be checked before anything is contacted.
+
+        Raises:
+            CrawlError: If the seed (every address it has) is outside the allowed subnets, or
+                its name does not resolve to an IPv4 address.
+        """
+        seed_ip = host.strip() if is_ipv4(host) else None
+        candidate_ips: list[str] = [seed_ip] if seed_ip else []
+        name_key = normalize_hostname(host)
+        override = self.config.device_overrides.get(name_key) or {}
+        if not candidate_ips:
+            if override.get("host"):
+                candidate_ips = extract_ipv4(override["host"])
+            elif name_key in self.config.name_to_ip:
+                candidate_ips = extract_ipv4(self.config.name_to_ip[name_key])
+            else:
+                try:
+                    candidate_ips = [self._resolve_host(host)]
+                except (socket.gaierror, OSError) as exc:
+                    raise CrawlError(
+                        f"Could not resolve seed host {host!r} to verify scope: {exc}"
+                    ) from exc
+
+        in_scope_ips = [ip for ip in candidate_ips if self.config.in_scope(ip)]
+        if not in_scope_ips:
+            raise CrawlError(f"Seed device {host} is outside crawl.allowed_subnets")
+        return _Target(
+            in_scope_ips[0],
+            override.get("device_type") or device_type,
+            None,
+            0,
+            remaining_hosts=tuple(in_scope_ips[1:]),
+            origin=host,
+        )
+
+    def _unusable_seed(
+        self, host: str, device_type: str, exc: CrawlError, result: CrawlResult
+    ) -> SeedResult:
+        """Record a seed that cannot be crawled (multi-seed crawls go on without it).
+
+        An out-of-scope seed becomes an ``OUT_OF_SCOPE`` blind spot (never contacted); a seed
+        whose name does not resolve becomes a failed device. Either way the run is partial.
+        """
+        ips = [host] if is_ipv4(host) else []
+        name = "" if ips else host
+        node = self.engine.resolve(name=name, ips=ips)
+        self.engine.set_seed_origin(node, host)
+        if "outside crawl.allowed_subnets" in str(exc):
+            self.engine.mark_skipped(node, str(exc), "out_of_scope")
+            status = SEED_OUT_OF_SCOPE
+        else:
+            self.engine.mark_failed(
+                node, str(exc), host=host, device_type=device_type, kind="connect"
+            )
+            status = SEED_FAILED
+        logger.warning("Skipping seed %s: %s", host, exc)
+        result.failures.append((host, str(exc)))
+        return SeedResult(host, device_type, status, str(exc), node_id=node)
+
+    def _finish_seeds(self, result: CrawlResult) -> None:
+        """Fill each seed's final status and the number of devices it led to."""
+        graph = self.engine.graph
+        by_origin: dict[str, list[str]] = {}
+        for node_id, attrs in graph.nodes(data=True):
+            by_origin.setdefault(attrs.get("seed_origin") or "", []).append(node_id)
+        for seed in result.seeds:
+            node = self._seed_nodes.get(seed.host) or seed.node_id
+            if node and self.engine.has_node(node):
+                seed.node_id = node
+                attrs = graph.nodes[node]
+                if attrs["status"] == STATUS_CRAWLED:
+                    owner = attrs.get("seed_origin") or seed.host
+                    if owner != seed.host:  # another address of a device an earlier seed crawled
+                        seed.status = SEED_DUPLICATE
+                        seed.detail = f"the same device as seed {owner}"
+                    else:
+                        seed.status, seed.detail = SEED_CRAWLED, ""
+                elif attrs["status"] == STATUS_FAILED:
+                    seed.status, seed.detail = SEED_FAILED, attrs["error"]
+                # anything else keeps the status it got when it was set aside (out of scope ...)
+            members = by_origin.get(seed.host, [])
+            seed.discovered = len(members)
+            seed.crawled = sum(1 for n in members if graph.nodes[n]["status"] == STATUS_CRAWLED)
+
     # ------------------------------------------------------------------ run
     def run(self) -> CrawlResult:
         """Crawl until the queue is empty.
 
         Per-device failures (timeout, authentication, parse errors) are logged, recorded as
-        ``failed`` nodes and do not stop the crawl.
+        ``failed`` nodes and do not stop the crawl. With several seeds, a seed that is outside
+        ``crawl.allowed_subnets`` (or does not resolve) is skipped and reported (out-of-scope
+        blind spot, partial result) while the others are crawled.
 
         Raises:
-            CrawlError: If the seed device is outside allowed subnets or could not be crawled.
+            CrawlError: If the (only) seed device is outside allowed subnets, if no seed is
+                usable, or if no device could be crawled.
         """
-        seed_ip = self.seed_host.strip() if is_ipv4(self.seed_host) else None
-        candidate_seed_ips: list[str] = [seed_ip] if seed_ip else []
-        if not candidate_seed_ips:
-            name_key = normalize_hostname(self.seed_host)
-            override = self.config.device_overrides.get(name_key)
-            if override and override.get("host"):
-                candidate_seed_ips = extract_ipv4(override["host"])
-            elif name_key in self.config.name_to_ip:
-                candidate_seed_ips = extract_ipv4(self.config.name_to_ip[name_key])
-            else:
-                try:
-                    resolved = self._resolve_host(self.seed_host)
-                    candidate_seed_ips = [resolved]
-                except (socket.gaierror, OSError) as exc:
-                    raise CrawlError(
-                        f"Could not resolve seed host {self.seed_host!r} to verify scope: {exc}"
-                    ) from exc
-
-        in_scope_seed_ips = [ip for ip in candidate_seed_ips if self.config.in_scope(ip)]
-        if not in_scope_seed_ips:
-            raise CrawlError(f"Seed device {self.seed_host} is outside crawl.allowed_subnets")
-
-        initial_host = in_scope_seed_ips[0]
-        initial_remaining = tuple(in_scope_seed_ips[1:])
-
         started = time.monotonic()
         result = CrawlResult(seed=self.seed_host)
-        queue: deque[_Target] = deque(
-            [
-                _Target(
-                    initial_host,
-                    self.seed_device_type,
-                    None,
-                    0,
-                    remaining_hosts=initial_remaining,
-                )
-            ]
-        )
+        queue: deque[_Target] = deque()
+        for host, device_type in self.seeds:
+            try:
+                target = self._seed_target(host, device_type)
+            except CrawlError as exc:
+                if len(self.seeds) == 1:
+                    raise
+                result.seeds.append(self._unusable_seed(host, device_type, exc, result))
+                continue
+            result.seeds.append(SeedResult(host, target.device_type))
+            queue.append(target)
+        if not queue:
+            raise CrawlError(
+                "No seed device can be crawled: "
+                + "; ".join(f"{host}: {err}" for host, err in result.failures)
+            )
 
         while queue:
             target = queue.popleft()
@@ -369,6 +509,8 @@ class Crawler:
                         target.host,
                         self.engine.label(current_node),
                     )
+                    if target.depth == 0:  # another seed (or an address of it) got there first
+                        self._seed_nodes.setdefault(target.origin, current_node)
                     continue
 
             limit = self.config.max_devices
@@ -378,6 +520,10 @@ class Crawler:
                     self.engine.mark_skipped(
                         target.node_id, f"max_devices limit ({limit}) reached", "max_devices"
                     )
+                elif target.depth == 0:
+                    for seed in result.seeds:
+                        if seed.host == target.origin:
+                            seed.detail = f"crawl.max_devices ({limit}) was used up first"
                 continue
 
             self._visited_hosts.add(host_key)
@@ -396,9 +542,13 @@ class Crawler:
         result.bundled_links = self.engine.annotate_bundles()
         result.warned_links = self.engine.annotate_links(self.config.link_checks)
         result.blind_spots = self._collect_blind_spots()
+        self._finish_seeds(result)
         if result.crawled == 0:
             reason = result.failures[0][1] if result.failures else "no device was crawled"
-            raise CrawlError(f"Could not crawl the seed device {self.seed_host}: {reason}")
+            if len(self.seeds) == 1:
+                raise CrawlError(f"Could not crawl the seed device {self.seed_host}: {reason}")
+            names = ", ".join(host for host, _type in self.seeds)
+            raise CrawlError(f"Could not crawl any seed device ({names}): {reason}")
         return result
 
     # ------------------------------------------------------------ one device
@@ -469,6 +619,8 @@ class Crawler:
                 self.engine.merge(keep=known, drop=node_hint)
                 node_hint = known
         device_id = self.engine.resolve(name=parsed.hostname, ips=host_ips, node_id=node_hint)
+        if target.depth == 0:
+            self._seed_nodes[target.origin] = device_id
         if self.engine.status(device_id) == STATUS_CRAWLED:
             logger.info(
                 "%s is %s, which was already crawled; skipping the duplicate",
@@ -485,7 +637,9 @@ class Crawler:
             hostname=parsed.hostname,
         )
         if target.depth == 0:
-            self.engine.set_seed(device_id)
+            self.engine.set_seed(device_id, origin=target.origin)
+        else:
+            self.engine.set_seed_origin(device_id, target.origin)
         self.engine.set_port_channels(device_id, parsed.port_channels, parsed.lag_note)
         self.engine.set_discovery(
             device_id, parsed.protocols_used, parsed.protocol_notes, parsed.status_note
@@ -502,6 +656,15 @@ class Crawler:
                     "auto": state.auto,
                 }
         self.engine.set_link_status(device_id, link_status)
+        vlan_ports = {
+            key: parsed.vlan_ports[key]
+            for key in (
+                [normalize_interface(n.local_interface).lower() for n in parsed.neighbors]
+                + [normalize_interface(pc.name).lower() for pc in parsed.port_channels]
+            )
+            if key in parsed.vlan_ports
+        }
+        self.engine.set_vlan_info(device_id, vlan_ports, parsed.vlan_note)
         result.crawled += 1
 
         queued_before = len(queue)
@@ -522,7 +685,8 @@ class Crawler:
             if found:
                 node_id = found
             else:
-                name = "" if is_ipv4(self.seed_host) else self.seed_host
+                seed_name = target.origin if target.depth == 0 else self.seed_host
+                name = "" if is_ipv4(seed_name) else seed_name
                 ips = [target.host] if is_ipv4(target.host) else []
                 node_id = self.engine.resolve(name=name, ips=ips)
         self.engine.mark_failed(
@@ -533,7 +697,10 @@ class Crawler:
             kind=getattr(exc, "kind", "other"),
         )
         if target.depth == 0:
-            self.engine.set_seed(node_id)
+            self.engine.set_seed(node_id, origin=target.origin)
+            self._seed_nodes[target.origin] = node_id
+        else:
+            self.engine.set_seed_origin(node_id, target.origin)
         result.failures.append((target.host, str(exc)))
 
     # -------------------------------------------------------------- neighbors
@@ -562,6 +729,8 @@ class Crawler:
             neighbor.neighbor_interface,
             protocols=neighbor.protocols,
         )
+        origin = self.engine.graph.nodes[device_id]["seed_origin"]
+        self.engine.set_seed_origin(neighbor_id, origin)  # the first seed to reach it keeps it
 
         if self.engine.status(neighbor_id) in (STATUS_CRAWLED, STATUS_FAILED):
             return
@@ -580,7 +749,14 @@ class Crawler:
         self.engine.mark_skipped(neighbor_id, "")
         self._queued_nodes.add(neighbor_id)
         queue.append(
-            _Target(host, device_type, neighbor_id, depth, remaining_hosts=remaining_hosts)
+            _Target(
+                host,
+                device_type,
+                neighbor_id,
+                depth,
+                remaining_hosts=remaining_hosts,
+                origin=origin,
+            )
         )
         logger.debug("Queued %s (%s) at depth %d", host, device_type, depth)
 

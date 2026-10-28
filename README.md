@@ -15,6 +15,10 @@ Structure, CLI, logging, error handling and config management deliberately mirro
 - Breadth-first crawl with a queue and a `visited` set: no device is logged in to twice, loops are harmless.
 - **Scope guard**: the crawler only contacts addresses inside `crawl.allowed_subnets` (mandatory), within
   `max_depth` hops and `max_devices` sessions. It sends your credentials nowhere else.
+- **Several seeds** (`--seeds A,B,...` or `crawl.seeds`): networks in disconnected islands or several data centers
+  are crawled into one topology. All seeds share one queue, one visited set and one alias table, so a device
+  reachable from two seeds is polled once; each device records which seed led to it (`seed_origin`). A seed outside
+  `allowed_subnets` is never contacted: it is skipped and reported as an out-of-scope blind spot.
 - Per-device failures (timeout, bad credentials, rejected command, parse mismatch) never stop the crawl. Each one
   is classified (`SSH auth failed`, `SSH timeout`, ...), written under the red node, listed in a **Problems**
   panel with a one-line fix hint, and explained in full when you click the node.
@@ -28,6 +32,16 @@ Structure, CLI, logging, error handling and config management deliberately mirro
 - **Link checks**: each device is asked what its ports really run at, and links get a warning triangle when
   a Gigabit port runs at 100M, the two ends disagree on speed or duplex, a port is half duplex, or the members of a
   port-channel run at different speeds.
+- **VLAN checks**: each switch is asked for the mode, native VLAN and allowed VLANs of its ports (Cisco IOS, IOS-XE
+  and NX-OS), and the two ends of every link are compared. A trunk against an access port and a native VLAN mismatch
+  are `mismatch`; allowed-VLAN lists that differ are `degraded`. They carry a `⚠ [VLAN]` tag on the diagram and in
+  the picture, and the link panel shows the mode, native VLAN and allowed VLANs of both ends. A bundle is judged
+  once, on its port-channels.
+- **Crawl history**: every crawl is recorded in `data/history/history.db` with a diff against the one before
+  (devices and links added or removed, cables moved to another port, speed changes, new blind spots). List it with
+  `--history`; served by `--serve`, the page gets a scrubber that steps back through the recorded crawls.
+- **Web server mode** (`--serve`): the explorer, a JSON API and an on-demand crawl, with the standard library only.
+  See [Web server mode](#web-server-mode).
 - **Several discovery protocols**: LLDP and Cisco CDP are read in the same session and merged. CDP finds neighbors
   that LLDP does not see (phones, older switches) and keeps a device crawlable when its LLDP is off or unsupported.
   Links seen only through CDP are drawn dashed.
@@ -221,15 +235,20 @@ Every inference can be overridden in `visualization:` in `settings.yaml`.
 |---|---|
 | `--config PATH` | Settings file (default `config/settings.yaml`) |
 | `--seed HOST` / `--device-type TYPE` | Override `seed.host` / `seed.device_type` |
+| `--seeds HOST[,HOST...]` | Several seed devices, crawled into one topology (islands, data centers). Takes precedence over `--seed` and over `seed.host` / `crawl.seeds`; all seeds use `--device-type` |
 | `--allow CIDR` | Add an allowed subnet (repeatable) |
 | `--max-depth N` / `--max-devices N` | Override the crawl limits (`--max-depth 0` = seed only) |
 | `--protocols LIST` | Discovery protocols to read, comma separated, in priority order (default `lldp,cdp`) |
 | `--no-link-checks` | Do not read interface speed / duplex and do not check links (saves a command per device) |
+| `--no-vlan-checks` | Do not read switchport / VLAN data and do not compare VLANs (saves a command per device) |
 | `--no-port-channels` | Do not read port-channels (saves one command per device; links are not bundled) |
 | `--replay DIR` | Read saved CLI output instead of using SSH |
 | `--save-raw DIR` | Also store each device's raw CLI output (one extra command per device) |
 | `--output PATH` | Where the diagram goes. Default: `output/topology.png` **and** `output/topology.html`. A `.html` path writes the interactive page only; any other extension (`png`, `svg`, `pdf`, ...) writes that picture and the page next to it under the same name |
-| `--dry-run` | Crawl and draw, but do not write `data/current_state.json` |
+| `--dry-run` | Crawl and draw, but do not write `data/current_state.json` or add to the history |
+| `--history [N]` | List the `N` most recent recorded crawls (default 20, `0` = all) with what changed in each, and exit |
+| `--serve` | Host the explorer and the JSON API instead of crawling now (see below) |
+| `--port PORT` / `--bind ADDR` | Port (default 8080, or `LLDP_MONITOR_PORT` / `web.port`) and address (default `127.0.0.1`, or `LLDP_MONITOR_BIND` / `web.bind`) of `--serve` |
 | `-v` | Debug logging |
 
 | Exit code | Meaning |
@@ -247,6 +266,30 @@ INFO    src.crawler: Not crawling isp-edge: management IP 203.0.113.1 is outside
 INFO    src.crawler: core1: 5 LLDP neighbor(s), 3 queued
 ERROR   src.crawler: Failed to crawl 10.0.0.250: Authentication failed for 10.0.0.250 ...
 ```
+
+## Web server mode
+
+```bash
+python3 main.py --serve                # http://127.0.0.1:8080/
+python3 main.py --serve --port 9000
+```
+
+`--serve` hosts `output/topology.html` and a small JSON API (standard library `http.server`, nothing to install).
+Every answer is `{"status": "ok", "data": ...}` or `{"status": "error", "error": "..."}` with a standard status code.
+
+| Endpoint | Answer |
+|---|---|
+| `GET /` | The explorer page. When served, it shows a **History** bar: drag the slider to see the topology as it was in an earlier crawl (what did not exist then is hidden), **Changes** lists what differed from the crawl before |
+| `GET /api/status` | Crawl state (`idle` / `running`, how the last one ended), device and link counts, blind spots, warning counts (with the VLAN ones), the latest history run |
+| `GET /api/history` | The recorded crawls, newest first, each with its change summary |
+| `GET /api/history/<run_id>` | One crawl: its full diff and its full graph JSON (404 for an unknown ID, 400 for a malformed one) |
+| `POST /api/crawl` | Start a crawl in a background thread with the options `--serve` was started with (`--replay`, `--allow`, ...). 409 while one is running; the lock file `data/.crawl.lock` also stops it overlapping a crawl started elsewhere |
+
+`POST /api/crawl` logs in to your devices with your credentials, so the server listens on `127.0.0.1` unless you
+say otherwise. It refuses requests from other web sites (cross-origin `Origin`, and on a loopback address any
+`Host` that is not `localhost` / `127.0.0.1` / `::1`), takes no options in the request body (it must be empty or
+`{}`, with `Content-Type: application/json`), and has no login of its own: if you bind it to a network address, put
+something that authenticates people in front of it. Stop it with Ctrl+C.
 
 ## Platform support
 
@@ -401,7 +444,16 @@ NetworkX 3.7, Pyvis 0.3.2).
 
 - Devices are identified by hostname, management IP and chassis ID. Two different devices that share a hostname
   are treated as one.
-- The crawl is sequential (one SSH session at a time); large networks take a while.
+- The crawl is sequential (one SSH session at a time), also with several seeds: seeds share one queue and are all
+  served before any deeper device, and `max_devices` is shared by all of them. Large networks take a while.
+- All seeds use one device type (`--device-type` / `seed.device_type`); to crawl a seed of another platform, list it
+  under `crawl.device_overrides` (its `device_type` is used for a seed too).
+- VLAN checks need the switchport command of the platform: built in for Cisco IOS, IOS-XE and NX-OS only (other
+  platforms are crawled as before, without VLAN data; `custom_vendors` cannot add it yet). Ports that are routed or
+  whose mode is not definite (dynamic and down) are not judged, and two access ports with different VLANs are not
+  flagged.
+- The crawl history keeps one full graph per crawl (compressed); `history.max_runs` bounds it. It is stored in a local
+  SQLite file, so several crawlers on different machines do not share one history.
 - A link whose ports are unknown on both ends and which sits beside another unknown-port link between the same
   two devices is merged into one.
 - Only IPv4 management addresses are used; IPv6-only neighbors are drawn but not crawled.

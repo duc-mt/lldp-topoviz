@@ -16,6 +16,8 @@ config/settings.local.yaml
 # Generated output
 data/*.json
 data/*.json.tmp
+data/history/
+data/.crawl.lock
 output/*
 !output/.gitkeep
 

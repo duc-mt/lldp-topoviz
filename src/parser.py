@@ -2,7 +2,8 @@
 ==============================================================================
 Module Name:   parser.py
 Description:   Turns one device's poll result into normalised neighbor records
-               (LLDP, CDP, ... merged), port-channels and interface status. Live
+               (LLDP, CDP, ... merged), port-channels, interface status and the
+               VLAN setup of the ports (switchport mode, native / allowed VLANs). Live
                polls arrive already parsed by Netmiko's use_textfsm=True; replayed
                text goes through the same Netmiko TextFSM helper and templates.
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from src import MapperError, normalize_interface, short_name
+from src.models import PortVlanInfo
 from src.poller import RawLldp
 from src.textparse import TemplateMismatch, parse_text
 from src.vendors import get_profile, merge_neighbors, row_to_neighbor
@@ -118,6 +120,8 @@ class ParsedDevice:
     protocol_notes: dict[str, str] = field(default_factory=dict)  # protocol -> why it gave nothing
     interfaces: dict[str, InterfaceStatus] = field(default_factory=dict)  # normalised port -> state
     status_note: str = ""  # why interfaces is empty
+    vlan_ports: dict[str, PortVlanInfo] = field(default_factory=dict)  # normalised port -> VLANs
+    vlan_note: str = ""  # why vlan_ports is empty
 
 
 class BaseParser(ABC):
@@ -225,6 +229,17 @@ class LldpParser(BaseParser):
         interfaces, status_note = self._parse_status(raw, profile)
         if status_note:
             logger.info("%s: no interface status (%s)", raw.host, status_note)
+        vlan_ports, vlan_note = self._parse_vlan(raw, profile)
+        if vlan_note:
+            logger.info("%s: no VLAN data (%s)", raw.host, vlan_note)
+        if vlan_ports:  # each neighbor remembers the VLAN setup of the port it was seen on
+            neighbors = [
+                replace(
+                    n,
+                    local_vlan_info=vlan_ports.get(normalize_interface(n.local_interface).lower()),
+                )
+                for n in neighbors
+            ]
         return ParsedDevice(
             host=raw.host,
             device_type=raw.device_type,
@@ -238,6 +253,8 @@ class LldpParser(BaseParser):
             protocol_notes=notes,
             interfaces=interfaces,
             status_note=status_note,
+            vlan_ports=vlan_ports,
+            vlan_note=vlan_note,
         )
 
     @staticmethod
@@ -324,3 +341,21 @@ class LldpParser(BaseParser):
         except (KeyError, TypeError, ValueError) as exc:
             return {}, f"the interface status rows were not understood: {exc!r}"
         return {normalize_interface(item.name).lower(): item for item in parsed}, ""
+
+    def _parse_vlan(self, raw: RawLldp, profile: Any) -> tuple[dict[str, PortVlanInfo], str]:
+        """VLAN setup per port as ``({normalised port: PortVlanInfo}, note)``; never raises."""
+        rows, note = self._enrichment_rows(
+            raw,
+            "VLAN",
+            profile.vlan,
+            raw.vlan_rows,
+            raw.vlan_text,
+            raw.vlan_note,
+        )
+        if rows is None:
+            return {}, note
+        try:
+            parsed = profile.vlan.parser(rows)
+        except (KeyError, TypeError, ValueError) as exc:
+            return {}, f"the VLAN rows were not understood: {exc!r}"
+        return {normalize_interface(item.interface).lower(): item for item in parsed}, ""

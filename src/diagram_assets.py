@@ -206,7 +206,8 @@ PAGE_JS = r"""
            ['Address', n.address], ['Management IPs', n.mgmt_ips], ['Device type', n.device_type],
            ['Chassis ID', n.chassis_id], ['Capabilities', n.capabilities],
            ['Discovery', (n.discovery || []).map(function (x) { return x.toUpperCase(); })],
-           ['Depth', n.depth]]);
+           ['Depth', n.depth],
+           ['Reached from seed', DATA.meta && DATA.meta.seeds && DATA.meta.seeds.length > 1 ? n.seed_origin : '']]);
     if (n.skip_reason) { section('Not crawled', n.skip_reason); }
     var noted = Object.keys(n.protocol_notes || {});
     if (n.status === 'crawled' && noted.length) {
@@ -291,6 +292,21 @@ PAGE_JS = r"""
     facts([['Speed', speedText(k)], ['Bundle state', b ? (b.up ? 'up' : 'down') : ''],
            ['Seen by', (k.sources || []).map(function (x) { return x.toUpperCase(); }).join(' + ')],
            ['Link checks', k.checked ? '' : 'no interface speed/duplex data for this link']]);
+    if (k.vlan && k.vlan.length) {
+      cur.appendChild(el('h3', null, 'VLAN'));
+      var vl = el('ul');
+      k.vlan.forEach(function (v) {
+        [['a', k.a], ['b', k.b]].forEach(function (side) {
+          var info = v[side[0]];
+          if (!info) { return; }
+          var text = info.mode === 'trunk'
+            ? 'trunk, native VLAN ' + (info.native_vlan || '?') + ', allowed ' + (info.allowed_vlans || '?')
+            : info.mode === 'access' ? 'access, VLAN ' + (info.access_vlan || '?') : info.mode;
+          vl.appendChild(el('li', k.vlan_warn ? 'w-' + k.vlan_warn : null, side[1] + ' ' + info.interface + ': ' + text));
+        });
+      });
+      cur.appendChild(vl);
+    }
     cur = bodies['if'];
     cur.appendChild(el('h3', null, b ? 'Member links' : 'Interfaces'));
     var ul = el('ul');
@@ -377,7 +393,7 @@ PAGE_JS = r"""
       b.type = 'button';
       b.addEventListener('click', function () { focusEdge(w.id); });
       li.appendChild(b);
-      li.appendChild(el('div', 'pb-why', w.text));
+      li.appendChild(el('div', 'pb-why', (w.vlan ? '\u26a0 [VLAN] ' : '') + w.text));
       wlist.appendChild(li);
     });
     wbox.appendChild(wlist);
@@ -408,7 +424,8 @@ PAGE_JS = r"""
     if (type === 'speed') { return k.speed_style === val; }
     if (type === 'bundle') { return !!k.bundle; }
     if (type === 'src') { return k.sources.length > 0 && k.sources.indexOf('lldp') < 0; }
-    return type === 'warn' ? k.warn === val : false;
+    if (type === 'warn') { return val === 'vlan' ? !!k.vlan_warn : k.warn === val; }
+    return false;
   }
   // Focus mode: the 1-hop and 2-hop neighbourhood of one device stays lit (2-hop a little softer), the rest drops to 15 %.
   function hood(center) {
@@ -721,6 +738,15 @@ PAGE_JS = r"""
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('!', pt.x, pt.y + 3);
+      if (k.vlan_warn) {                           // a VLAN finding: the triangle gets a ⚠ [VLAN] tag under it
+        var tag = '\u26a0 [VLAN]';
+        ctx.font = '700 10px ' + FAMILY;
+        var tw = ctx.measureText(tag).width + 10;
+        ctx.fillStyle = WARN[k.vlan_warn];
+        ctx.fillRect(pt.x - tw / 2, pt.y + r + 3, tw, 15);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(tag, pt.x, pt.y + r + 11);
+      }
       ctx.restore();
     });
   }
@@ -1981,4 +2007,228 @@ OPS_UI_JS = r"""
   window.LLDP_MINIMAP = drawMinimap;
   scheduleMinimap();
 })();
+"""
+
+
+# Crawl history: the pure part (cable identity, what existed in a recorded run, change wording) has
+# no DOM, so Node can run it (tests/test_history_client.py); the UI below fetches the server's API.
+HISTORY_ENGINE_JS = r"""
+(function (root) {
+  'use strict';
+
+  function norm(port) { return String(port || '').trim().toLowerCase(); }
+
+  // Identity of one cable: its two (device, port) ends, in a fixed order.
+  function linkKey(a, portA, b, portB) {
+    var x = a + '\u0000' + norm(portA), y = b + '\u0000' + norm(portB);
+    return x < y ? x + '\u0001' + y : y + '\u0001' + x;
+  }
+
+  // Which devices and drawn links of the page existed in a recorded graph (the snapshot document).
+  // ``nodes`` is DATA.nodes, ``links`` is DATA.links (one drawn link may carry several cables).
+  // ``missing`` names the devices the recorded run had that this page does not draw at all.
+  function presence(graph, nodes, links) {
+    var inGraph = {}, cables = {}, outNodes = {}, outLinks = {};
+    (graph.nodes || []).forEach(function (n) { inGraph[n.id] = n; });
+    (graph.links || []).forEach(function (l) { cables[linkKey(l.source, l.source_port, l.target, l.target_port)] = true; });
+    Object.keys(nodes).forEach(function (id) { outNodes[id] = !!inGraph[id]; });
+    Object.keys(links).forEach(function (eid) {
+      var k = links[eid];
+      outLinks[eid] = !!(outNodes[k.from] && outNodes[k.to] &&
+        (k.pairs || []).some(function (p) { return cables[linkKey(k.from, p[0], k.to, p[1])]; }));
+    });
+    var missing = Object.keys(inGraph).filter(function (id) { return !(id in nodes); })
+      .map(function (id) { return inGraph[id].label || id; }).sort();
+    return { nodes: outNodes, links: outLinks, missing: missing };
+  }
+
+  function plural(n, noun) { return n + ' ' + noun + (n === 1 ? '' : 's'); }
+
+  // One line for the summary of a run's diff, e.g. "+1 device, 1 cable moved, 1 speed downgrade".
+  function describe(diff) {
+    diff = diff || {};
+    if (diff.first_run) { return 'first recorded run'; }
+    var bits = [];
+    [['devices_added', '+', 'device'], ['devices_removed', '\u2212', 'device'],
+     ['links_added', '+', 'link'], ['links_removed', '\u2212', 'link']].forEach(function (r) {
+      if (diff[r[0]]) { bits.push(r[1] + plural(diff[r[0]], r[2])); }
+    });
+    if (diff.reconnections) { bits.push(plural(diff.reconnections, 'cable') + ' moved'); }
+    if (diff.speed_downgrades) { bits.push(plural(diff.speed_downgrades, 'speed downgrade')); }
+    var up = (diff.speed_changes || 0) - (diff.speed_downgrades || 0);
+    if (up > 0) { bits.push(plural(up, 'speed upgrade')); }
+    if (diff.new_blind_spots) { bits.push(plural(diff.new_blind_spots, 'new blind spot')); }
+    return bits.join(', ') || 'no changes';
+  }
+
+  function speed(mbps) {
+    if (!mbps) { return '?'; }
+    return mbps >= 1000 ? (mbps / 1000) + 'G' : mbps + 'M';
+  }
+
+  // The detailed changes of a run (the full diff the API returns), one readable line each.
+  function lines(diff) {
+    diff = diff || {};
+    var out = [];
+    function cable(c) { return c.a + ' ' + c.a_port + ' \u2194 ' + c.b + ' ' + c.b_port; }
+    (diff.devices_added || []).forEach(function (d) { out.push('+ device ' + d.label); });
+    (diff.devices_removed || []).forEach(function (d) { out.push('\u2212 device ' + d.label + ' (disappeared)'); });
+    (diff.links_added || []).forEach(function (c) { out.push('+ link ' + cable(c)); });
+    (diff.links_removed || []).forEach(function (c) { out.push('\u2212 link ' + cable(c)); });
+    (diff.reconnections || []).forEach(function (r) {
+      out.push('cable moved on ' + r.device + ' ' + r.port + ': ' + r.from_device + ' ' + r.from_port +
+               ' \u2192 ' + r.to_device + ' ' + r.to_port);
+    });
+    (diff.speed_changes || []).forEach(function (c) {
+      out.push('speed ' + (c.direction === 'down' ? 'downgrade' : 'upgrade') + ' ' + cable(c) + ': ' + speed(c.from) + ' \u2192 ' + speed(c.to));
+    });
+    (diff.new_blind_spots || []).forEach(function (b) {
+      out.push('new blind spot ' + b.hostname + (b.reason ? ' (' + b.reason + ')' : '') + (b.discovered_via ? ' via ' + b.discovered_via : ''));
+    });
+    return out;
+  }
+
+  root.LLDPHistory = { linkKey: linkKey, presence: presence, describe: describe, lines: lines };
+})(typeof window !== 'undefined' ? window : globalThis);
+"""
+
+# The scrubber bar: only active when the page is served by ``main.py --serve`` (http), where it asks
+# /api/history for the recorded crawls and /api/history/<run_id> for the graph of the one picked.
+HISTORY_UI_JS = r"""
+(function () {
+  'use strict';
+  var DATA = window.LLDP_DETAIL, Hist = window.LLDPHistory;
+  if (!DATA || !Hist || typeof network === 'undefined' || typeof fetch !== 'function') { return; }
+  if (!/^https?:$/.test(location.protocol)) { return; }          // opened from disk: there is no server to ask
+  var nodesDS = network.body.data.nodes, edgesDS = network.body.data.edges;
+  var H = window.LLDP_TIMEHIDE = window.LLDP_TIMEHIDE || { nodes: {}, edges: {} };
+  var runs = [], shown = -1, cache = {}, timer = null, detailOn = false;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined && text !== null) { e.textContent = text; }
+    return e;
+  }
+  function api(path) {
+    return fetch(path, { headers: { Accept: 'application/json' }, cache: 'no-store' }).then(function (r) {
+      return r.json().then(function (body) { return r.ok && body && body.status === 'ok' ? body.data : null; });
+    });
+  }
+  function when(run) { return String(run.timestamp || '').replace('T', ' ').slice(0, 19); }
+
+  var memberOf = {}, groupEdge = {};
+  (DATA.groups || []).forEach(function (g) {
+    g.members.forEach(function (m) { memberOf[m] = true; });
+    Object.keys(DATA.links).forEach(function (eid) {
+      var k = DATA.links[eid];
+      if ((k.from === g.sw && g.members.indexOf(k.to) >= 0) || (k.to === g.sw && g.members.indexOf(k.from) >= 0)) { groupEdge[eid] = true; }
+    });
+  });
+
+  var bar = el('div'), slider = el('input'), label = el('span', 'hb-label'), sum = el('span', 'hb-sum');
+  var live = el('button', null, 'Live'), more = el('button', null, 'Changes'), fresh = el('button', 'hb-new', 'New crawl \u2013 reload');
+  var detail = el('div');
+  bar.id = 'hist-bar'; bar.hidden = true;
+  bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Crawl history');
+  slider.type = 'range'; slider.min = '0'; slider.step = '1';
+  slider.setAttribute('aria-label', 'Recorded crawl');
+  live.type = 'button'; more.type = 'button'; fresh.type = 'button'; fresh.hidden = true;
+  live.title = 'Back to the newest recorded crawl'; more.title = 'What changed in the crawl shown';
+  detail.id = 'hist-detail'; detail.hidden = true; detail.setAttribute('role', 'region'); detail.setAttribute('aria-label', 'Changes in the crawl shown');
+  bar.appendChild(el('b', 'hb-title', 'History'));
+  [slider, label, sum, live, more, fresh].forEach(function (n) { bar.appendChild(n); });
+  document.body.appendChild(bar); document.body.appendChild(detail);
+
+  function setVisibility(vis) {
+    var nu = [], eu = [];
+    Object.keys(DATA.nodes).forEach(function (id) {
+      var hide = !vis.nodes[id]; H.nodes[id] = hide;
+      if (!memberOf[id]) { nu.push({ id: id, hidden: hide }); }
+    });
+    Object.keys(DATA.links).forEach(function (eid) {
+      var hide = !vis.links[eid]; H.edges[eid] = hide;
+      if (!groupEdge[eid]) { eu.push({ id: eid, hidden: hide }); }
+    });
+    nodesDS.update(nu); edgesDS.update(eu);
+    if (window.LLDP_REGROUP) { window.LLDP_REGROUP(); }
+    if (window.LLDP_RESTYLE) { window.LLDP_RESTYLE(); }
+    network.redraw();
+  }
+  function showLive() {
+    if (DATA.diff && DATA.diff.baseline && window.LLDP_SET_TIME) { window.LLDP_SET_TIME('overlay'); return; }
+    var all = { nodes: {}, links: {} };
+    Object.keys(DATA.nodes).forEach(function (id) { all.nodes[id] = !DATA.nodes[id].ghost; });
+    Object.keys(DATA.links).forEach(function (eid) { all.links[eid] = !DATA.links[eid].ghost; });
+    setVisibility(all);
+  }
+  function render(run, full) {
+    label.textContent = when(run) + '  \u00b7  ' + run.run_id;
+    var head = run.devices + ' devices, ' + run.links + ' links  \u00b7  ';
+    sum.textContent = head + Hist.describe(run.diff);
+    detail.textContent = '';
+    if (!full) { return; }
+    var rows = Hist.lines(full.diff), vis = Hist.presence(full.graph, DATA.nodes, DATA.links);
+    detail.appendChild(el('h3', null, 'Changes in this crawl (vs the one before)'));
+    var ul = el('ul');
+    (rows.length ? rows : ['no changes']).forEach(function (t) { ul.appendChild(el('li', null, t)); });
+    detail.appendChild(ul);
+    if (vis.missing.length) { detail.appendChild(el('p', 'hb-note', 'Not on this map: ' + vis.missing.join(', '))); }
+  }
+  function select(i) {
+    shown = i;
+    var run = runs[i], newest = i === runs.length - 1;
+    slider.value = String(i); live.disabled = newest;
+    if (newest) { render(run, null); showLive(); sum.textContent += '  (live)'; return; }
+    render(run, null); sum.textContent += '  \u00b7  loading\u2026';
+    var token = run.run_id;
+    (cache[token] ? Promise.resolve(cache[token]) : api('/api/history/' + encodeURIComponent(token))).then(function (full) {
+      if (runs[shown].run_id !== token) { return; }            // the slider moved on
+      if (!full) { sum.textContent = 'could not load this crawl'; return; }
+      cache[token] = full;
+      render(run, full); setVisibility(Hist.presence(full.graph, DATA.nodes, DATA.links));
+    }).catch(function () { sum.textContent = 'could not load this crawl'; });
+  }
+
+  slider.addEventListener('input', function () {
+    var i = parseInt(slider.value, 10);
+    label.textContent = when(runs[i]) + '  \u00b7  ' + runs[i].run_id;
+    clearTimeout(timer); timer = setTimeout(function () { select(i); }, 120);
+  });
+  live.addEventListener('click', function () { select(runs.length - 1); });
+  more.addEventListener('click', function () { detailOn = !detailOn; detail.hidden = !detailOn; more.setAttribute('aria-pressed', String(detailOn)); });
+  fresh.addEventListener('click', function () { location.reload(); });
+
+  api('/api/history').then(function (list) {
+    if (!list || !list.length) { return; }
+    runs = list.slice().reverse();                              // oldest first: the slider runs left to right in time
+    slider.max = String(runs.length - 1); slider.disabled = runs.length < 2;
+    bar.hidden = false; select(runs.length - 1);
+    setInterval(function () {                                   // tell the viewer when a newer crawl was recorded
+      api('/api/history').then(function (now) {
+        if (now && now.length && now[0].run_id !== runs[runs.length - 1].run_id) { fresh.hidden = false; }
+      }).catch(function () {});
+    }, 30000);
+  }).catch(function () {});
+})();
+"""
+
+HISTORY_CSS = r"""
+#hist-bar{position:fixed;z-index:22;left:354px;bottom:96px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 10px;max-width:calc(100vw - 580px);background:var(--glass);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--shadow);border-radius:10px;color:var(--text);font-size:12px}
+body.side-off #hist-bar{left:14px}
+#hist-bar[hidden],#hist-detail[hidden]{display:none}
+#hist-bar .hb-title{color:var(--strong);letter-spacing:.06em;text-transform:uppercase;font-size:11px}
+#hist-bar input[type=range]{width:220px;accent-color:var(--accent)}
+#hist-bar .hb-label{font-family:var(--mono,monospace);color:var(--strong)}
+#hist-bar .hb-sum{color:var(--muted)}
+#hist-bar button{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:3px 10px;cursor:pointer}
+#hist-bar button[disabled]{opacity:.4;cursor:not-allowed}
+#hist-bar button[aria-pressed="true"]{border-color:var(--accent);color:var(--strong)}
+#hist-bar .hb-new{border-color:var(--warn);color:var(--strong)}
+#hist-detail{position:fixed;z-index:23;left:354px;bottom:140px;width:440px;max-width:calc(100vw - 380px);max-height:40vh;overflow:auto;box-sizing:border-box;padding:10px 14px;background:var(--glass);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--shadow);border-radius:10px;color:var(--text);font-size:12px}
+body.side-off #hist-detail{left:14px}
+#hist-detail h3{margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+#hist-detail ul{margin:0;padding-left:16px}
+#hist-detail .hb-note{margin:8px 0 0;color:var(--muted)}
+@media print{#hist-bar,#hist-detail{display:none!important}}
 """

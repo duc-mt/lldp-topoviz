@@ -1,0 +1,13 @@
+# Two switches joined by four links, each configured differently on purpose
+# (see tests/test_vlan_checks.py): native VLAN mismatch (Gi1/0/1), allowed VLAN mismatch (Gi1/0/2),
+# trunk against access (Gi1/0/3) and a clean trunk (Gi1/0/4).
+10.0.0.11:
+  file: 10.0.0.11.txt
+  vlan_file: 10.0.0.11.vlan.txt
+  hostname: core1
+  device_type: cisco_ios
+10.0.1.11:
+  file: 10.0.1.11.txt
+  vlan_file: 10.0.1.11.vlan.txt
+  hostname: dist1
+  device_type: cisco_nxos

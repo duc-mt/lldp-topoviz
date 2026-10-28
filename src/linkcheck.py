@@ -4,7 +4,9 @@ Module Name:   linkcheck.py
 Description:   Link health checks from what each end of a link reports about its
                own port: speed mismatch between the two ends, duplex mismatch,
                half duplex, a port running below its type (a Gigabit port at
-               100 Mbps) and port-channel members at different speeds.
+               100 Mbps), port-channel members at different speeds and VLAN
+               consistency (trunk against access, native VLAN mismatch, allowed
+               VLAN lists that differ between the two ends of a trunk).
 Author:        Mai Tan Duc <ducmai.network@gmail.com>
 Created:       2026-10-12
 Version:       1.3.0
@@ -26,6 +28,7 @@ from typing import Any
 from src import normalize_interface
 from src.config import ConfigError
 from src.enrichment import link_speed, port_speed, speed_label
+from src.models import PortVlanInfo, format_vlan_list
 
 SEVERITY_MISMATCH = "mismatch"  # the two ends disagree: the link is misconfigured or flapping
 SEVERITY_DEGRADED = "degraded"  # the link works but below what its ports can do
@@ -38,10 +41,11 @@ class LinkCheckConfig:
     enabled: bool = True
     ignore_ports: tuple[re.Pattern[str], ...] = ()  # interface names, e.g. "^Fa" for 100M ports
     ignore_hostnames: tuple[re.Pattern[str], ...] = ()  # devices whose ports are never judged
+    vlan: bool = True  # also compare the VLAN setup of the two ends (needs the VLAN capture)
 
     @classmethod
     def from_settings(cls, section: dict[str, Any] | None) -> LinkCheckConfig:
-        """Build from the ``link_checks`` mapping.
+        """Build from the ``link_checks`` mapping (``vlan: false`` skips the VLAN comparison).
 
         Raises:
             ConfigError: If the section is not a mapping or a regex is invalid.
@@ -53,6 +57,7 @@ class LinkCheckConfig:
         try:
             return cls(
                 enabled=bool(section.get("enabled", True)),
+                vlan=bool(section.get("vlan", True)),
                 ignore_ports=tuple(
                     re.compile(str(p), re.IGNORECASE) for p in section.get("ignore_ports") or []
                 ),
@@ -91,7 +96,9 @@ class End:
 class LinkWarning:
     """One finding about a link."""
 
-    kind: str  # speed_mismatch | duplex_mismatch | half_duplex | below_nominal | bundle_speed_mix
+    # speed_mismatch | duplex_mismatch | half_duplex | below_nominal | bundle_speed_mix, and the
+    # VLAN findings vlan_mode_mismatch | vlan_native_mismatch | vlan_allowed_mismatch
+    kind: str
     severity: str
     text: str
 
@@ -195,3 +202,80 @@ def check_bundle(member_speeds: Sequence[int | None]) -> list[LinkWarning]:
             + ")",
         )
     ]
+
+
+KIND_VLAN_MODE = "vlan_mode_mismatch"
+KIND_VLAN_NATIVE = "vlan_native_mismatch"
+KIND_VLAN_ALLOWED = "vlan_allowed_mismatch"
+VLAN_KINDS = frozenset({KIND_VLAN_MODE, KIND_VLAN_NATIVE, KIND_VLAN_ALLOWED})
+
+
+def is_vlan_warning(kind: str) -> bool:
+    """True for a VLAN finding (the diagram marks those ``[VLAN]``)."""
+    return kind in VLAN_KINDS
+
+
+def _vlan_words(vlans: set[int]) -> str:
+    return format_vlan_list(vlans) or "none"
+
+
+def check_vlan_consistency(
+    local: PortVlanInfo,
+    remote: PortVlanInfo,
+    local_label: str = "",
+    remote_label: str = "",
+) -> list[LinkWarning]:
+    """Compare the VLAN setup of the two ends of an inter-switch link.
+
+    * trunk on one end, access on the other: ``mismatch`` (the link carries one VLAN untagged on
+      one side and tagged frames on the other);
+    * both ends trunk with different native VLANs: ``mismatch`` (untagged traffic leaks between
+      the two VLANs);
+    * both ends trunk and one allows VLANs the other does not (the symmetric difference of the
+      two allowed lists): ``degraded`` (the link works, but those VLANs are cut on this hop).
+
+    A port that is ``routed`` or ``unknown`` on either end is never judged, and neither is a
+    value one end did not report (a ``None`` native VLAN or allowed list). ``local_label`` and
+    ``remote_label`` are the device names used in the text (the interface alone when omitted).
+    """
+    a = f"{local_label} {local.interface}".strip()
+    b = f"{remote_label} {remote.interface}".strip()
+    modes = {local.mode, remote.mode}
+    if modes != {"access", "trunk"} and not (local.mode == remote.mode == "trunk"):
+        return []
+    warnings: list[LinkWarning] = []
+    if modes == {"access", "trunk"}:
+        warnings.append(
+            LinkWarning(
+                KIND_VLAN_MODE,
+                SEVERITY_MISMATCH,
+                f"VLAN mode mismatch: {a} is {local.mode} but {b} is {remote.mode}",
+            )
+        )
+        return warnings
+    if local.native_vlan and remote.native_vlan and local.native_vlan != remote.native_vlan:
+        warnings.append(
+            LinkWarning(
+                KIND_VLAN_NATIVE,
+                SEVERITY_MISMATCH,
+                f"Native VLAN mismatch: {a} uses VLAN {local.native_vlan} but "
+                f"{b} uses VLAN {remote.native_vlan}",
+            )
+        )
+    if local.allowed_vlans is not None and remote.allowed_vlans is not None:
+        only_local = local.allowed_vlans - remote.allowed_vlans
+        only_remote = remote.allowed_vlans - local.allowed_vlans
+        if only_local or only_remote:
+            parts = []
+            if only_local:
+                parts.append(f"VLAN {_vlan_words(only_local)} allowed on {a} but not on {b}")
+            if only_remote:
+                parts.append(f"VLAN {_vlan_words(only_remote)} allowed on {b} but not on {a}")
+            warnings.append(
+                LinkWarning(
+                    KIND_VLAN_ALLOWED,
+                    SEVERITY_DEGRADED,
+                    "Allowed VLAN mismatch: " + "; ".join(parts),
+                )
+            )
+    return warnings
